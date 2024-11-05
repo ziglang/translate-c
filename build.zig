@@ -32,10 +32,11 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/translate.zig"),
+        .root_source_file = b.path("src/Translator.zig"),
         .target = target,
         .optimize = optimize,
     });
+    unit_tests.root_module.addImport("aro", aro.module("aro"));
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");

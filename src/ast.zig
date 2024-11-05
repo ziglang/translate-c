@@ -637,7 +637,7 @@ pub const Payload = struct {
 
         pub const ArrayTypeInfo = struct {
             elem_type: Node,
-            len: usize,
+            len: u64,
         };
     };
 
