@@ -107,6 +107,83 @@ pub fn addCheckFile(translate_c: *TranslateC, expected_matches: []const []const 
 
 fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
+    const b = step.owner;
     const translate_c: *TranslateC = @fieldParentPtr("step", step);
-    _ = translate_c;
+
+    var argv_list = std.ArrayList([]const u8).init(b.allocator);
+    try argv_list.append(translate_c.translate_c_exe.getEmittedBin().getPath(b));
+
+    var man = b.graph.cache.obtain();
+    defer man.deinit();
+
+    // Random bytes to make TranslateC unique. Refresh this with new
+    // random bytes when TranslateC implementation is modified in a
+    // non-backwards-compatible way.
+    man.hash.add(@as(u32, 0x2701BED2));
+
+    if (!translate_c.target.query.isNative()) {
+        const triple = try translate_c.target.query.zigTriple(b.allocator);
+        try argv_list.append(b.fmt("--target={s}", .{triple}));
+        man.hash.addBytes(triple);
+    }
+
+    const c_source_path = translate_c.source.getPath3(b, step);
+    _ = try man.addFilePath(c_source_path, null);
+    const resolved_source_path = b.pathResolve(&.{ c_source_path.root_dir.path orelse ".", c_source_path.sub_path });
+    try argv_list.append(resolved_source_path);
+
+    const out_name = b.fmt("{s}.zig", .{std.fs.path.stem(c_source_path.sub_path)});
+    if (try step.cacheHit(&man)) {
+        const digest = man.final();
+        translate_c.output_file.path = try b.cache_root.join(b.allocator, &.{
+            "o", &digest, out_name,
+        });
+        return;
+    }
+
+    const digest = man.final();
+
+    const sub_path = b.pathJoin(&.{ "o", &digest, out_name });
+    const sub_path_dirname = std.fs.path.dirname(sub_path).?;
+
+    b.cache_root.handle.makePath(sub_path_dirname) catch |err| {
+        return step.fail("unable to make path '{}{s}': {s}", .{
+            b.cache_root, sub_path_dirname, @errorName(err),
+        });
+    };
+    try argv_list.append("-o");
+    try argv_list.append(sub_path);
+
+    var child = std.process.Child.init(argv_list.items, b.allocator);
+    child.cwd = b.build_root.path;
+    child.cwd_dir = b.build_root.handle;
+    child.env_map = &b.graph.env_map;
+
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+
+    try child.spawn();
+    const stderr = try child.stderr.?.reader().readAllAlloc(b.allocator, 10 * 1024 * 1024);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                return step.fail(
+                    "failed to translate {s}:\n{s}",
+                    .{ resolved_source_path, stderr },
+                );
+            }
+        },
+        .Signal, .Stopped, .Unknown => {
+            return step.fail(
+                "command to translate {s} failed unexpectedly",
+                .{resolved_source_path},
+            );
+        },
+    }
+
+    translate_c.output_file.path = try b.cache_root.join(b.allocator, &.{sub_path});
+    try man.writeManifest();
 }
