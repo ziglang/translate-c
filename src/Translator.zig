@@ -1357,18 +1357,7 @@ fn transStmt(c: *Context, node: NodeIndex) TransError!ZigNode {
 }
 
 fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
-    const data = c.tree.nodes.items(.data)[@intFromEnum(compound)];
-    var buf: [2]NodeIndex = undefined;
-    // TODO move these helpers to Aro
-    const stmts = switch (c.tree.nodes.items(.tag)[@intFromEnum(compound)]) {
-        .compound_stmt_two => blk: {
-            if (data.bin.lhs != .none) buf[0] = data.bin.lhs;
-            if (data.bin.rhs != .none) buf[1] = data.bin.rhs;
-            break :blk buf[0 .. @as(u32, @intFromBool(data.bin.lhs != .none)) + @intFromBool(data.bin.rhs != .none)];
-        },
-        .compound_stmt => c.tree.data[data.range.start..data.range.end],
-        else => unreachable,
-    };
+    const stmts = c.tree.childNodes(compound);
     for (stmts) |stmt| {
         const result = try transStmt(c, stmt);
         switch (result.tag()) {
