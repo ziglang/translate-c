@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const TranslateC = @import("build/TranslateC.zig");
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
