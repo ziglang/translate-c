@@ -434,6 +434,14 @@ fn warn(c: *Context, scope: *Scope, loc: TokenIndex, comptime format: []const u8
     try scope.appendNode(try ZigTag.warning.create(c.arena, value));
 }
 
+fn tokenIndex(c: *Context, node: NodeIndex) ?TokenIndex {
+    const token_index = c.tree.nodes.items(.loc)[@intFromEnum(node)];
+    return switch (token_index) {
+        .none => null,
+        else => @intFromEnum(token_index),
+    };
+}
+
 pub fn translate(
     gpa: mem.Allocator,
     comp: *aro.Compilation,
@@ -582,9 +590,7 @@ fn transTopLevelDecls(c: *Context) !void {
 
 fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
     const node_tags = c.tree.nodes.items(.tag);
-    const node_data = c.tree.nodes.items(.data);
     const node_ty = c.tree.nodes.items(.ty);
-    const data = node_data[@intFromEnum(decl)];
     switch (node_tags[@intFromEnum(decl)]) {
         .typedef => {
             try transTypeDef(c, scope, decl);
@@ -592,27 +598,16 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
 
         .struct_decl_two,
         .union_decl_two,
-        => {
-            try transRecordDecl(c, scope, node_ty[@intFromEnum(decl)]);
-        },
         .struct_decl,
         .union_decl,
         => {
             try transRecordDecl(c, scope, node_ty[@intFromEnum(decl)]);
         },
 
-        .enum_decl_two => {
-            var fields = [2]NodeIndex{ data.bin.lhs, data.bin.rhs };
-            var field_count: u8 = 0;
-            if (fields[0] != .none) field_count += 1;
-            if (fields[1] != .none) field_count += 1;
+        .enum_decl_two, .enum_decl => {
+            const fields = c.tree.childNodes(decl);
             const enum_decl = node_ty[@intFromEnum(decl)].canonicalize(.standard).data.@"enum";
-            try transEnumDecl(c, scope, enum_decl, fields[0..field_count]);
-        },
-        .enum_decl => {
-            const fields = c.tree.data[data.range.start..data.range.end];
-            const enum_decl = node_ty[@intFromEnum(decl)].canonicalize(.standard).data.@"enum";
-            try transEnumDecl(c, scope, enum_decl, fields);
+            try transEnumDecl(c, scope, enum_decl, fields, c.tokenIndex(decl) orelse 0);
         },
 
         .enum_field_decl,
@@ -644,7 +639,7 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         => {
             try transVarDecl(c, decl);
         },
-        .static_assert => try warn(c, &c.global_scope.base, 0, "ignoring _Static_assert declaration", .{}),
+        .static_assert => try warn(c, &c.global_scope.base, c.tokenIndex(decl) orelse 0, "ignoring _Static_assert declaration", .{}),
         else => unreachable,
     }
 }
@@ -776,7 +771,7 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
             const field_type = transType(c, scope, field.ty, .preserve_quals, field_loc) catch |err| switch (err) {
                 error.UnsupportedType => {
                     try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
-                    try warn(c, scope, 0, "{s} demoted to opaque type - unable to translate type of field {s}", .{
+                    try warn(c, scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
                         container_kind_name,
                         field_name,
                     });
@@ -943,7 +938,7 @@ fn transVarDecl(c: *Context, node: NodeIndex) Error!void {
     return failDecl(c, data.decl.name, name, "unable to translate variable declaration", .{});
 }
 
-fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_nodes: []const NodeIndex) Error!void {
+fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_nodes: []const NodeIndex, source_loc: ?TokenIndex) Error!void {
     if (c.decl_table.get(@intFromPtr(enum_decl))) |_|
         return; // Avoid processing this decl twice
     const toplevel = scope.id == .root;
@@ -992,9 +987,9 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
             }
         }
 
-        break :blk transType(c, scope, enum_decl.tag_ty, .standard, 0) catch |err| switch (err) {
+        break :blk transType(c, scope, enum_decl.tag_ty, .standard, source_loc orelse 0) catch |err| switch (err) {
             error.UnsupportedType => {
-                return failDecl(c, 0, name, "unable to translate enum integer type", .{});
+                return failDecl(c, source_loc orelse 0, name, "unable to translate enum integer type", .{});
             },
             else => |e| return e,
         };
@@ -1068,7 +1063,7 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
                 const decl_name = c.mapper.lookup(enum_decl.name);
                 if (c.weak_global_names.contains(decl_name)) trans_scope = &c.global_scope.base;
             }
-            try transEnumDecl(c, trans_scope, enum_decl, &.{});
+            try transEnumDecl(c, trans_scope, enum_decl, &.{}, source_loc);
             return ZigTag.identifier.create(c.arena, c.decl_table.get(@intFromPtr(enum_decl)).?);
         },
         .pointer => {
@@ -1357,18 +1352,7 @@ fn transStmt(c: *Context, node: NodeIndex) TransError!ZigNode {
 }
 
 fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
-    const data = c.tree.nodes.items(.data)[@intFromEnum(compound)];
-    var buf: [2]NodeIndex = undefined;
-    // TODO move these helpers to Aro
-    const stmts = switch (c.tree.nodes.items(.tag)[@intFromEnum(compound)]) {
-        .compound_stmt_two => blk: {
-            if (data.bin.lhs != .none) buf[0] = data.bin.lhs;
-            if (data.bin.rhs != .none) buf[1] = data.bin.rhs;
-            break :blk buf[0 .. @as(u32, @intFromBool(data.bin.lhs != .none)) + @intFromBool(data.bin.rhs != .none)];
-        },
-        .compound_stmt => c.tree.data[data.range.start..data.range.end],
-        else => unreachable,
-    };
+    const stmts = c.tree.childNodes(compound);
     for (stmts) |stmt| {
         const result = try transStmt(c, stmt);
         switch (result.tag()) {
