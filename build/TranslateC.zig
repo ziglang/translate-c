@@ -145,6 +145,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const sub_path = b.pathJoin(&.{ "o", &digest, out_name });
     const sub_path_dirname = std.fs.path.dirname(sub_path).?;
+    const out_path = try b.cache_root.join(b.allocator, &.{sub_path});
 
     b.cache_root.handle.makePath(sub_path_dirname) catch |err| {
         return step.fail("unable to make path '{}{s}': {s}", .{
@@ -152,7 +153,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         });
     };
     try argv_list.append("-o");
-    try argv_list.append(sub_path);
+    try argv_list.append(out_path);
 
     var child = std.process.Child.init(argv_list.items, b.allocator);
     child.cwd = b.build_root.path;
@@ -184,6 +185,6 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         },
     }
 
-    translate_c.output_file.path = try b.cache_root.join(b.allocator, &.{sub_path});
+    translate_c.output_file.path = out_path;
     try man.writeManifest();
 }

@@ -437,37 +437,8 @@ fn warn(c: *Context, scope: *Scope, loc: TokenIndex, comptime format: []const u8
 pub fn translate(
     gpa: mem.Allocator,
     comp: *aro.Compilation,
-    args: []const []const u8,
+    tree: aro.Tree,
 ) !std.zig.Ast {
-    try comp.addDefaultPragmaHandlers();
-    comp.langopts.setEmulatedCompiler(aro.target_util.systemCompiler(comp.target));
-
-    var driver: aro.Driver = .{ .comp = comp };
-    defer driver.deinit();
-
-    var macro_buf = std.ArrayList(u8).init(gpa);
-    defer macro_buf.deinit();
-
-    assert(!try driver.parseArgs(std.io.null_writer, macro_buf.writer(), args));
-    assert(driver.inputs.items.len == 1);
-    const source = driver.inputs.items[0];
-
-    const builtin_macros = try comp.generateBuiltinMacros(.include_system_defines, null);
-    const user_macros = try comp.addSourceFromBuffer("<command line>", macro_buf.items);
-
-    var pp = try aro.Preprocessor.initDefault(comp);
-    defer pp.deinit();
-
-    try pp.preprocessSources(&.{ source, builtin_macros, user_macros });
-
-    var tree = try pp.parse();
-    defer tree.deinit();
-
-    // Workaround for https://github.com/Vexu/arocc/issues/603
-    for (comp.diagnostics.list.items) |msg| {
-        if (msg.kind == .@"error" or msg.kind == .@"fatal error") return error.ParsingFailed;
-    }
-
     const mapper = tree.comp.string_interner.getFastTypeMapper(tree.comp.gpa) catch tree.comp.string_interner.getSlowTypeMapper();
     defer mapper.deinit(tree.comp.gpa);
 
