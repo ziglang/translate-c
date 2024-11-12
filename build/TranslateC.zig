@@ -22,12 +22,14 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     link_libc: bool = true,
+    translate_c_exe: ?*std.Build.Step.Compile = null,
     translate_c_dep_name: []const u8 = "translate-c",
+    translate_c_optimize: std.builtin.OptimizeMode = .ReleaseFast,
 };
 
 pub fn create(owner: *std.Build, options: Options) *TranslateC {
-    const translate_c_exe = owner.dependency(options.translate_c_dep_name, .{
-        .optimize = .ReleaseFast,
+    const translate_c_exe = options.translate_c_exe orelse owner.dependency(options.translate_c_dep_name, .{
+        .optimize = options.translate_c_optimize,
     }).artifact("translate-c");
 
     const translate_c = owner.allocator.create(TranslateC) catch @panic("OOM");
