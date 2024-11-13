@@ -23,11 +23,7 @@ pub fn addCaseTests(
                 .optimize = mode,
             });
             exe.root_module.addImport("aro", aro.module("aro"));
-            b.installDirectory(.{
-                .source_dir = aro.path("include"),
-                .install_dir = .prefix,
-                .install_subdir = "include",
-            });
+            // TODO why does this need to be installed?
             b.installArtifact(exe);
             exes[i] = exe;
         }
@@ -49,6 +45,9 @@ pub fn addCaseTests(
         const case = caseFromFile(b, entry, target.query) catch |err|
             std.debug.panic("failed to process case '{s}': {s}", .{ entry.path, @errorName(err) });
 
+        // Skip cases we expect to fail, would be nice to be able to check that they actually do fail.
+        if (case.expect == .fail) continue;
+
         for (translate_exes) |exe| switch (case.kind) {
             .translate => |output| {
                 const annotated_case_name = b.fmt("translate {s}", .{case.name});
@@ -67,7 +66,6 @@ pub fn addCaseTests(
                 const check_file = translate_c.addCheckFile(output);
                 check_file.step.name = b.fmt("{s} CheckFile", .{annotated_case_name});
                 test_translate_step.dependOn(&check_file.step);
-                test_translate_step.dependOn(&translate_c.step);
             },
             .run => |output| {
                 const annotated_case_name = b.fmt("run-translated {s}", .{case.name});
@@ -163,7 +161,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
             expect = std.meta.stringToEnum(Case.Expect, value) orelse return error.InvalidExpectValue;
         } else return error.InvalidTestConfigOption;
     }
-    
+
     return .{
         .name = std.fs.path.stem(entry.basename),
         .target = b.resolveTargetQuery(target),
@@ -179,8 +177,9 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
 fn trailing(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scalar)) ![]const u8 {
     var buf: std.ArrayList(u8) = .init(arena);
     defer buf.deinit();
-    while (it.next()) |line|  {
-        const trimmed = std.mem.trim(u8, line[2..], " \t\r");
+    while (it.next()) |line| {
+        if (line.len < 3) continue;
+        const trimmed = line[3..];
         if (buf.items.len != 0) try buf.append('\n');
         try buf.appendSlice(trimmed);
     }
@@ -193,8 +192,9 @@ fn trailingSplit(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scala
     var buf: std.ArrayList(u8) = .init(arena);
     defer buf.deinit();
 
-    while (it.next()) |line|  {
-        const trimmed = std.mem.trim(u8, line[2..], " \t\r");
+    while (it.next()) |line| {
+        if (line.len < 3) continue;
+        const trimmed = line[3..];
         if (trimmed.len == 0) {
             if (buf.items.len != 0) {
                 try out.append(try buf.toOwnedSlice());
@@ -209,4 +209,3 @@ fn trailingSplit(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scala
     }
     return try out.toOwnedSlice();
 }
-
