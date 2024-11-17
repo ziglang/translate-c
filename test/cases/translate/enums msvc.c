@@ -6,7 +6,6 @@ enum Foo {
 
 // translate
 // target=x86_64-windows-msvc
-// expect=fail
 //
 // pub const FooA: c_int = 2;
 // pub const FooB: c_int = 5;

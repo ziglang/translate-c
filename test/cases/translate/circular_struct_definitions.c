@@ -9,7 +9,6 @@ struct Bar {
 };
 
 // translate
-// expect=fail
 //
 // pub const struct_Bar = extern struct {
 //     next: [*c]struct_Foo = @import("std").mem.zeroes([*c]struct_Foo),

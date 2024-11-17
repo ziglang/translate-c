@@ -9,7 +9,6 @@ enum Bar {
 void func(struct Foo *a, enum Bar **b);
 
 // translate
-// expect=fail
 // target=x86_64-windows-msvc
 //
 // pub const struct_Foo = extern struct {

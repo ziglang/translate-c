@@ -10,7 +10,6 @@ typedef struct ONENAMEWITHSTRUCT
 } ONENAMEWITHSTRUCT;
 
 // translate
-// expect=fail
 // target=native-linux
 //
 // pub const struct_NAMED = extern struct {

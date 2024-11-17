@@ -6,7 +6,6 @@ struct Bar {
 };
 
 // translate
-// expect=fail
 //
 // pub const struct_Foo = opaque {};
 // 
