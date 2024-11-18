@@ -63,7 +63,15 @@ pub fn build(b: *std.Build) !void {
         break :modes chosen_opt_modes_buf[0..chosen_mode_index];
     };
 
-    const tests_step = b.step("test", "Run all tests");
+    const test_step = b.step("test", "Run all tests");
+
+    const fmt_dirs: []const []const u8 = &.{ "build", "src", "test" };
+    b.step("fmt", "Modify source files in place to have conforming formatting")
+        .dependOn(&b.addFmt(.{ .paths = fmt_dirs }).step);
+
+    const test_fmt = b.step("test-fmt", "Check source files having conforming formatting");
+    test_fmt.dependOn(&b.addFmt(.{ .paths = fmt_dirs, .check = true }).step);
+    test_step.dependOn(test_fmt);
 
     {
         const unit_test_step = b.step("test-unit", "Run unit tests");
@@ -77,12 +85,12 @@ pub fn build(b: *std.Build) !void {
             const run_unit_tests = b.addRunArtifact(unit_tests);
             unit_test_step.dependOn(&run_unit_tests.step);
         }
-        tests_step.dependOn(unit_test_step);
+        test_step.dependOn(unit_test_step);
     }
 
     try @import("test/cases.zig").addCaseTests(
         b,
-        tests_step,
+        test_step,
         optimization_modes,
         target,
         skip_translate,
