@@ -9,6 +9,12 @@ pub fn addCaseTests(
     skip_translate: bool,
     skip_run_translated: bool,
 ) !void {
+    const test_translate_step = b.step("test-translate", "Run the C translation tests");
+    if (!skip_translate) tests_step.dependOn(test_translate_step);
+
+    const test_run_translated_step = b.step("test-run-translated", "Run the Run-Translated-C tests");
+    if (!skip_run_translated) tests_step.dependOn(test_run_translated_step);
+
     const translate_exes = blk: {
         var exes: [4]*std.Build.Step.Compile = undefined;
         for (optimization_modes, 0..) |mode, i| {
@@ -23,18 +29,14 @@ pub fn addCaseTests(
                 .optimize = mode,
             });
             exe.root_module.addImport("aro", aro.module("aro"));
-            // TODO why does this need to be installed?
-            b.installArtifact(exe);
+
+            const install_step = b.addInstallArtifact(exe, .{});
+            test_translate_step.dependOn(&install_step.step);
+            test_run_translated_step.dependOn(&install_step.step);
             exes[i] = exe;
         }
         break :blk exes[0..optimization_modes.len];
     };
-
-    const test_translate_step = b.step("test-translate", "Run the C translation tests");
-    if (!skip_translate) tests_step.dependOn(test_translate_step);
-
-    const test_run_translated_step = b.step("test-run-translated", "Run the Run-Translated-C tests");
-    if (!skip_run_translated) tests_step.dependOn(test_run_translated_step);
 
     var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
     defer dir.close();
