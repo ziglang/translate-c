@@ -120,7 +120,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
 
     const input, const manifest = blk: {
         var start: ?usize = null;
-        const bytes = std.mem.trimRight(u8, src, " \t\r\n");
+        const bytes = std.mem.trimRight(u8, src, " \t\n");
         var cursor = bytes.len;
         while (true) : (cursor -= 1) {
             while (cursor > 0 and bytes[cursor - 1] != '\n') cursor -= 1;
@@ -140,7 +140,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
 
     const kind = kind: {
         const line = it.next() orelse return error.TestManifestMissingType;
-        const trimmed = std.mem.trim(u8, line[2..], " \t\r");
+        const trimmed = std.mem.trim(u8, line[2..], " \t");
         break :kind std.meta.stringToEnum(std.meta.Tag(Case.Kind), trimmed) orelse {
             std.log.warn("invalid test case type: {s}", .{trimmed});
             return error.TestManifestInvalidType;
@@ -148,7 +148,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
     };
 
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line[2..], " \t\r");
+        const trimmed = std.mem.trim(u8, line[2..], " \t");
 
         if (trimmed.len == 0) break; // Start of trailing data.
 
