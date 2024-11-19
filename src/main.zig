@@ -1,39 +1,79 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const process = std.process;
 const aro = @import("aro");
 const Translator = @import("Translator.zig");
 
-// TODO cleanup and handle errors more gracefully
-pub fn main() !void {
+const fast_exit = @import("builtin").mode != .Debug;
+
+var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
+
+pub fn main() u8 {
+    const gpa = general_purpose_allocator.allocator();
+    defer _ = general_purpose_allocator.deinit();
+
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
+    const args = process.argsAlloc(arena) catch {
+        std.debug.print("ran out of memory allocating arguments\n", .{});
+        if (fast_exit) process.exit(1);
+        return 1;
+    };
 
-    const args = try std.process.argsAlloc(arena);
-
-    var comp = aro.Compilation.init(gpa, std.fs.cwd());
+    var comp = aro.Compilation.initDefault(gpa, std.fs.cwd()) catch |err| switch (err) {
+        error.OutOfMemory => {
+            std.debug.print("ran out of memory initializing C compilation\n", .{});
+            if (fast_exit) process.exit(1);
+            return 1;
+        },
+    };
     defer comp.deinit();
-
-    try comp.addDefaultPragmaHandlers();
-    comp.langopts.setEmulatedCompiler(aro.target_util.systemCompiler(comp.target));
 
     var driver: aro.Driver = .{ .comp = &comp };
     defer driver.deinit();
 
+    translate(&driver, args) catch |err| switch (err) {
+        error.OutOfMemory => {
+            std.debug.print("ran out of memory translating\n", .{});
+            if (fast_exit) process.exit(1);
+            return 1;
+        },
+        error.FatalError => {
+            _ = renderErrors(&driver);
+            if (fast_exit) process.exit(1);
+            return 1;
+        },
+    };
+    if (fast_exit) process.exit(@intFromBool(comp.diagnostics.errors != 0));
+    return @intFromBool(comp.diagnostics.errors != 0);
+}
+
+fn translate(d: *aro.Driver, args: []const []const u8) !void {
+    const gpa = d.comp.gpa;
+
     var macro_buf = std.ArrayList(u8).init(gpa);
     defer macro_buf.deinit();
 
-    assert(!try driver.parseArgs(std.io.null_writer, macro_buf.writer(), args));
-    assert(driver.inputs.items.len == 1);
-    const source = driver.inputs.items[0];
+    // TODO override --help and --version
+    assert(!try d.parseArgs(std.io.null_writer, macro_buf.writer(), args));
 
-    const builtin_macros = try comp.generateBuiltinMacros(.include_system_defines, null);
-    const user_macros = try comp.addSourceFromBuffer("<command line>", macro_buf.items);
+    if (d.inputs.items.len != 1) {
+        return d.fatal("expected exactly one input file", .{});
+    }
+    const source = d.inputs.items[0];
 
-    var pp = try aro.Preprocessor.initDefault(&comp);
+    const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines, null) catch |err| switch (err) {
+        error.StreamTooLong => return d.fatal("builtin macro source exceeded max size", .{}),
+        else => |e| return e,
+    };
+    const user_macros = d.comp.addSourceFromBuffer("<command line>", macro_buf.items) catch |err| switch (err) {
+        error.StreamTooLong => return d.fatal("user provided macro source exceeded max size", .{}),
+        else => |e| return e,
+    };
+
+    var pp = try aro.Preprocessor.initDefault(d.comp);
     defer pp.deinit();
 
     try pp.preprocessSources(&.{ source, builtin_macros, user_macros });
@@ -41,50 +81,65 @@ pub fn main() !void {
     var c_tree = try pp.parse();
     defer c_tree.deinit();
 
-    // Workaround for https://github.com/Vexu/arocc/issues/603
-    for (comp.diagnostics.list.items) |msg| {
-        if (msg.kind == .@"error" or msg.kind == .@"fatal error") return renderErrorsAndExit(&comp);
+    if (renderErrors(d) != 0) {
+        if (fast_exit) process.exit(1);
+        return;
     }
 
-    var zig_tree = try Translator.translate(gpa, &comp, c_tree);
+    var zig_tree = try Translator.translate(gpa, d.comp, c_tree);
     defer zig_tree.deinit(gpa);
 
-    const formatted = try zig_tree.render(arena);
-    if (driver.output_name) |path| blk: {
-        if (std.mem.eql(u8, path, "-")) break :blk;
-        const out_file = try std.fs.cwd().createFile(path, .{});
-        defer out_file.close();
+    const formatted = try zig_tree.render(gpa);
+    defer gpa.free(formatted);
 
-        try out_file.writeAll(formatted);
-        return std.process.cleanExit();
+    var close_out_file = false;
+    var out_file_path: []const u8 = "<stdout>";
+    var out_file = std.io.getStdOut();
+    defer if (close_out_file) out_file.close();
+
+    if (d.output_name) |path| blk: {
+        if (std.mem.eql(u8, path, "-")) break :blk;
+        out_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+            return d.fatal("failed to create output file '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
+        };
+        close_out_file = true;
+        out_file_path = path;
     }
-    try std.io.getStdOut().writeAll(formatted);
-    return std.process.cleanExit();
+    std.io.getStdOut().writeAll(formatted) catch |err|
+        return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
+
+    if (fast_exit) process.exit(0);
 }
 
 /// Renders errors and fatal errors + associated notes (e.g. "expanded from here"); does not render warnings or associated notes
-/// Terminates with exit code 1
-fn renderErrorsAndExit(comp: *aro.Compilation) noreturn {
-    defer std.process.exit(1);
+fn renderErrors(d: *aro.Driver) u32 {
+    var writer = aro.Diagnostics.defaultMsgWriter(d.detectConfig(std.io.getStdErr()));
+    defer writer.deinit();
 
-    var writer = aro.Diagnostics.defaultMsgWriter(std.io.tty.detectConfig(std.io.getStdErr()));
-    defer writer.deinit(); // writer deinit must run *before* exit so that stderr is flushed
-
+    var errors: u32 = 0;
     var saw_error = false;
-    for (comp.diagnostics.list.items) |msg| {
+    for (d.comp.diagnostics.list.items) |msg| {
         switch (msg.kind) {
             .@"error", .@"fatal error" => {
+                errors += 1;
                 saw_error = true;
-                aro.Diagnostics.renderMessage(comp, &writer, msg);
+                aro.Diagnostics.renderMessage(d.comp, &writer, msg);
             },
             .warning => saw_error = false,
             .note => {
                 if (saw_error) {
-                    aro.Diagnostics.renderMessage(comp, &writer, msg);
+                    aro.Diagnostics.renderMessage(d.comp, &writer, msg);
                 }
             },
             .off => {},
             .default => unreachable,
         }
     }
+    const e_s = if (errors == 1) "" else "s";
+    if (errors != 0) {
+        writer.print("{d} error{s} generated.\n", .{ errors, e_s });
+    }
+
+    d.comp.diagnostics.list.items.len = 0;
+    return errors;
 }
