@@ -109,7 +109,7 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         close_out_file = true;
         out_file_path = path;
     }
-    std.io.getStdOut().writeAll(formatted) catch |err|
+    out_file.writeAll(formatted) catch |err|
         return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
 
     if (fast_exit) process.exit(0);
