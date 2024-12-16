@@ -227,6 +227,9 @@ pub const Node = extern union {
         /// [1]type{val} ** count
         array_filler,
 
+        /// comptime { if (!(lhs)) @compileError(rhs); }
+        static_assert,
+
         pub const last_no_payload_tag = Tag.@"break";
         pub const no_payload_count = @intFromEnum(last_no_payload_tag) + 1;
 
@@ -336,6 +339,7 @@ pub const Node = extern union {
                 .div_exact,
                 .offset_of,
                 .helpers_cast,
+                .static_assert,
                 => Payload.BinOp,
 
                 .integer_literal,
@@ -753,7 +757,7 @@ pub const Payload = struct {
 /// Converts the nodes into a Zig Ast.
 /// Caller must free the source slice.
 pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
-    var ctx = Context{
+    var ctx: Context = .{
         .gpa = gpa,
         .buf = std.ArrayList(u8).init(gpa),
     };
@@ -803,7 +807,7 @@ pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
         .start = @as(u32, @intCast(ctx.buf.items.len)),
     });
 
-    return std.zig.Ast{
+    return .{
         .source = try ctx.buf.toOwnedSliceSentinel(0),
         .tokens = ctx.tokens.toOwnedSlice(),
         .nodes = ctx.nodes.toOwnedSlice(),
@@ -2127,6 +2131,61 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 },
             };
         },
+        .static_assert => {
+            const payload = node.castTag(.static_assert).?.data;
+            const comptime_tok = try c.addToken(.keyword_comptime, "comptime");
+            const l_brace = try c.addToken(.l_brace, "{");
+
+            const if_tok = try c.addToken(.keyword_if, "if");
+            _ = try c.addToken(.l_paren, "(");
+            const cond = try c.addNode(.{
+                .tag = .bool_not,
+                .main_token = try c.addToken(.bang, "!"),
+                .data = .{
+                    .lhs = try renderNodeGrouped(c, payload.lhs),
+                    .rhs = undefined,
+                },
+            });
+            _ = try c.addToken(.r_paren, ")");
+
+            const compile_error_tok = try c.addToken(.builtin, "@compileError");
+            _ = try c.addToken(.l_paren, "(");
+            const err_msg = try renderNode(c, payload.rhs);
+            _ = try c.addToken(.r_paren, ")");
+            const compile_error = try c.addNode(.{
+                .tag = .builtin_call_two,
+                .main_token = compile_error_tok,
+                .data = .{ .lhs = err_msg, .rhs = 0 },
+            });
+
+            const if_node = try c.addNode(.{
+                .tag = .if_simple,
+                .main_token = if_tok,
+                .data = .{
+                    .lhs = cond,
+                    .rhs = compile_error,
+                },
+            });
+            _ = try c.addToken(.semicolon, ";");
+            _ = try c.addToken(.r_brace, "}");
+            const block_node = try c.addNode(.{
+                .tag = .block_two_semicolon,
+                .main_token = l_brace,
+                .data = .{
+                    .lhs = if_node,
+                    .rhs = 0,
+                },
+            });
+
+            return c.addNode(.{
+                .tag = .@"comptime",
+                .main_token = comptime_tok,
+                .data = .{
+                    .lhs = block_node,
+                    .rhs = undefined,
+                },
+            });
+        },
         .@"anytype" => unreachable, // Handled in renderParams
     }
 }
@@ -2527,6 +2586,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .assign,
         .helpers_macro,
         .import_c_builtin,
+        .static_assert,
         => {
             // these should never appear in places where grouping might be needed.
             unreachable;

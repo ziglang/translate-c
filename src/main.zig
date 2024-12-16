@@ -86,8 +86,12 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         return;
     }
 
+    // TODO this should probably pass an arraylist for the generated source.
     var zig_tree = try Translator.translate(gpa, d.comp, c_tree);
-    defer zig_tree.deinit(gpa);
+    defer {
+        gpa.free(zig_tree.source);
+        zig_tree.deinit(gpa);
+    }
 
     const formatted = try zig_tree.render(gpa);
     defer gpa.free(formatted);

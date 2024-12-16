@@ -469,6 +469,7 @@ pub fn translate(
         context.decl_table.deinit(gpa);
         context.alias_list.deinit();
         context.global_names.deinit(gpa);
+        context.weak_global_names.deinit(gpa);
         context.opaque_demotes.deinit(gpa);
         context.unnamed_typedefs.deinit(gpa);
         context.typedefs.deinit(gpa);
@@ -610,7 +611,9 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         => {
             try transVarDecl(c, decl);
         },
-        .static_assert => try warn(c, &c.global_scope.base, c.tokenIndex(decl) orelse 0, "ignoring _Static_assert declaration", .{}),
+        .static_assert => {
+            try transStaticAssert(c, &c.global_scope.base, decl);
+        },
         else => unreachable,
     }
 }
@@ -991,6 +994,40 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     }
 }
 
+fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) Error!void {
+    const node_data = c.tree.nodes.items(.data)[@intFromEnum(static_assert_node)];
+
+    const condition = c.transExpr(node_data.bin.lhs, .used) catch |err| switch (err) {
+        error.UnsupportedTranslation, error.UnsupportedType => {
+            return try warn(c, &c.global_scope.base, c.tokenIndex(node_data.bin.lhs).?, "unable to translate _Static_assert condition", .{});
+        },
+        error.OutOfMemory => |e| return e,
+    };
+
+    // generate @compileError message that matches C compiler output
+    const diagnostic = if (node_data.bin.rhs != .none) str: {
+        // Aro guarantees this to be a string literal.
+        const str_val = c.tree.value_map.get(node_data.bin.rhs).?;
+        const str_ty = c.tree.nodes.items(.ty)[@intFromEnum(node_data.bin.rhs)];
+
+        const bytes = c.comp.interner.get(str_val.ref()).bytes;
+        var buf = std.ArrayList(u8).init(c.gpa);
+        defer buf.deinit();
+
+        try buf.appendSlice("\"static assertion failed \\");
+
+        try buf.ensureUnusedCapacity(bytes.len);
+        try aro.Value.printString(bytes, str_ty, c.comp, buf.writer());
+        _ = buf.pop(); // printString adds a terminating " so we need to remove it
+        try buf.appendSlice("\\\"\"");
+
+        break :str try ZigTag.string_literal.create(c.arena, try c.arena.dupe(u8, buf.items));
+    } else try ZigTag.string_literal.create(c.arena, "\"static assertion failed\"");
+
+    const assert_node = try ZigTag.static_assert.create(c.arena, .{ .lhs = condition, .rhs = diagnostic });
+    try scope.appendNode(assert_node);
+}
+
 fn getTypeStr(c: *Context, ty: Type) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(c.gpa);
@@ -1316,16 +1353,21 @@ fn transFnType(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn transStmt(c: *Context, node: NodeIndex) TransError!ZigNode {
-    _ = c;
-    _ = node;
-    return error.UnsupportedTranslation;
+fn transStmt(c: *Context, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
+    const node_tags = c.tree.nodes.items(.tag);
+    switch (node_tags[@intFromEnum(stmt)]) {
+        .static_assert => {
+            try transStaticAssert(c, scope, stmt);
+            return ZigTag.declaration.init();
+        },
+        else => return fail(c, error.UnsupportedTranslation, c.tokenIndex(stmt).?, "TODO implement translation of stmt {s}", .{@tagName(node_tags[@intFromEnum(stmt)])}),
+    }
 }
 
 fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
     const stmts = c.tree.childNodes(compound);
     for (stmts) |stmt| {
-        const result = try transStmt(c, stmt);
+        const result = try transStmt(c, &block.base, stmt);
         switch (result.tag()) {
             .declaration, .empty_block => {},
             else => try block.statements.append(result),
