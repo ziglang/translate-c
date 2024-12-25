@@ -414,7 +414,7 @@ fn fail(
     comptime format: []const u8,
     args: anytype,
 ) (@TypeOf(err) || error{OutOfMemory}) {
-    try warn(c, &c.global_scope.base, source_loc, format, args);
+    try c.warn(&c.global_scope.base, source_loc, format, args);
     return err;
 }
 
@@ -422,7 +422,7 @@ fn failDecl(c: *Context, loc: TokenIndex, name: []const u8, comptime format: []c
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(c.arena, format, args);
-    try addTopLevelDecl(c, name, try ZigTag.fail_decl.create(c.arena, .{ .actual = name, .mangled = fail_msg }));
+    try c.addTopLevelDecl(name, try ZigTag.fail_decl.create(c.arena, .{ .actual = name, .mangled = fail_msg }));
     const str = try c.locStr(loc);
     const location_comment = try std.fmt.allocPrint(c.arena, "// {s}", .{str});
     try c.global_scope.nodes.append(try ZigTag.warning.create(c.arena, location_comment));
@@ -556,7 +556,7 @@ fn prepopulateGlobalNameTable(c: *Context) !void {
 
 fn transTopLevelDecls(c: *Context) !void {
     for (c.tree.root_decls) |node| {
-        try transDecl(c, &c.global_scope.base, node);
+        try c.transDecl(&c.global_scope.base, node);
     }
 }
 
@@ -565,7 +565,7 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
     const node_ty = c.tree.nodes.items(.ty);
     switch (node_tags[@intFromEnum(decl)]) {
         .typedef => {
-            try transTypeDef(c, scope, decl);
+            try c.transTypeDef(scope, decl);
         },
 
         .struct_decl_two,
@@ -573,13 +573,13 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .struct_decl,
         .union_decl,
         => {
-            try transRecordDecl(c, scope, node_ty[@intFromEnum(decl)]);
+            try c.transRecordDecl(scope, node_ty[@intFromEnum(decl)]);
         },
 
         .enum_decl_two, .enum_decl => {
             const fields = c.tree.childNodes(decl);
             const enum_decl = node_ty[@intFromEnum(decl)].canonicalize(.standard).data.@"enum";
-            try transEnumDecl(c, scope, enum_decl, fields, c.tokenIndex(decl) orelse 0);
+            try c.transEnumDecl(scope, enum_decl, fields, c.tokenIndex(decl) orelse 0);
         },
 
         .enum_field_decl,
@@ -599,7 +599,7 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .inline_fn_def,
         .inline_static_fn_def,
         => {
-            try transFnDecl(c, decl, true);
+            try c.transFnDecl(decl, true);
         },
 
         .@"var",
@@ -609,10 +609,10 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .threadlocal_extern_var,
         .threadlocal_static_var,
         => {
-            try transVarDecl(c, decl);
+            try c.transVarDecl(decl);
         },
         .static_assert => {
-            try transStaticAssert(c, &c.global_scope.base, decl);
+            try c.transStaticAssert(&c.global_scope.base, decl);
         },
         else => unreachable,
     }
@@ -631,9 +631,9 @@ fn transTypeDef(c: *Context, scope: *Scope, typedef_decl: NodeIndex) Error!void 
     if (!toplevel) name = try bs.makeMangledName(c, name);
 
     const typedef_loc = data.decl.name;
-    const init_node = transType(c, scope, ty, .standard, typedef_loc) catch |err| switch (err) {
+    const init_node = c.transType(scope, ty, .standard, typedef_loc) catch |err| switch (err) {
         error.UnsupportedType => {
-            return failDecl(c, typedef_loc, name, "unable to resolve typedef child type", .{});
+            return c.failDecl(typedef_loc, name, "unable to resolve typedef child type", .{});
         },
         error.OutOfMemory => |e| return e,
     };
@@ -649,7 +649,7 @@ fn transTypeDef(c: *Context, scope: *Scope, typedef_decl: NodeIndex) Error!void 
     const node = ZigNode.initPayload(&payload.base);
 
     if (toplevel) {
-        try addTopLevelDecl(c, name, node);
+        try c.addTopLevelDecl(name, node);
     } else {
         try scope.appendNode(node);
         if (node.tag() != .pub_var_simple) {
@@ -697,7 +697,7 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
         }
         name = try std.fmt.allocPrint(c.arena, "{s}_{s}", .{ container_kind_name, bare_name });
         if (toplevel and !is_unnamed) {
-            name = try mangleWeakGlobalName(c, name);
+            name = try c.mangleWeakGlobalName(name);
         }
     }
     if (!toplevel) name = try bs.makeMangledName(c, name);
@@ -733,7 +733,7 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
             // Demote record to opaque if it contains a bitfield
             if (!field.isRegularField()) {
                 try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
-                try warn(c, scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
+                try c.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
                 break :blk ZigTag.opaque_literal.init();
             }
 
@@ -742,10 +742,10 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
                 field_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{unnamed_field_count});
                 unnamed_field_count += 1;
             }
-            const field_type = transType(c, scope, field.ty, .preserve_quals, field_loc) catch |err| switch (err) {
+            const field_type = c.transType(scope, field.ty, .preserve_quals, field_loc) catch |err| switch (err) {
                 error.UnsupportedType => {
                     try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
-                    try warn(c, scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
+                    try c.warn(scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
                         container_kind_name,
                         field_name,
                     });
@@ -798,7 +798,7 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     };
     const node = ZigNode.initPayload(&payload.base);
     if (toplevel) {
-        try addTopLevelDecl(c, name, node);
+        try c.addTopLevelDecl(name, node);
         // Only add the alias if the name is available *and* it was caught by
         // name detection. Don't bother performing a weak mangle, since a
         // mangled name is of no real use here.
@@ -840,15 +840,15 @@ fn transFnDecl(c: *Context, fn_decl: NodeIndex, is_pub: bool) Error!void {
         .is_pub = is_pub,
     };
 
-    const proto_node = transFnType(c, &c.global_scope.base, raw_ty, fn_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
+    const proto_node = c.transFnType(&c.global_scope.base, raw_ty, fn_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
         error.UnsupportedType => {
-            return failDecl(c, fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
+            return c.failDecl(fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
         },
         error.OutOfMemory => |e| return e,
     };
 
     if (!has_body) {
-        return addTopLevelDecl(c, fn_name, proto_node);
+        return c.addTopLevelDecl(fn_name, proto_node);
     }
     const proto_payload = proto_node.castTag(.func).?;
 
@@ -867,8 +867,8 @@ fn transFnDecl(c: *Context, fn_decl: NodeIndex, is_pub: bool) Error!void {
             proto_payload.data.is_extern = true;
             proto_payload.data.is_export = false;
             proto_payload.data.is_inline = false;
-            try warn(c, &c.global_scope.base, fn_decl_loc, "function {s} parameter has no name, demoted to extern", .{fn_name});
-            return addTopLevelDecl(c, fn_name, proto_node);
+            try c.warn(&c.global_scope.base, fn_decl_loc, "function {s} parameter has no name, demoted to extern", .{fn_name});
+            return c.addTopLevelDecl(fn_name, proto_node);
         };
 
         const is_const = param_info.ty.qual.@"const";
@@ -889,7 +889,7 @@ fn transFnDecl(c: *Context, fn_decl: NodeIndex, is_pub: bool) Error!void {
         param_id += 1;
     }
 
-    transCompoundStmtInline(c, body_stmt, &block_scope) catch |err| switch (err) {
+    c.transCompoundStmtInline(body_stmt, &block_scope) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.UnsupportedTranslation,
         error.UnsupportedType,
@@ -897,19 +897,19 @@ fn transFnDecl(c: *Context, fn_decl: NodeIndex, is_pub: bool) Error!void {
             proto_payload.data.is_extern = true;
             proto_payload.data.is_export = false;
             proto_payload.data.is_inline = false;
-            try warn(c, &c.global_scope.base, fn_decl_loc, "unable to translate function, demoted to extern", .{});
-            return addTopLevelDecl(c, fn_name, proto_node);
+            try c.warn(&c.global_scope.base, fn_decl_loc, "unable to translate function, demoted to extern", .{});
+            return c.addTopLevelDecl(fn_name, proto_node);
         },
     };
 
     proto_payload.data.body = try block_scope.complete(c);
-    return addTopLevelDecl(c, fn_name, proto_node);
+    return c.addTopLevelDecl(fn_name, proto_node);
 }
 
 fn transVarDecl(c: *Context, node: NodeIndex) Error!void {
     const data = c.tree.nodes.items(.data)[@intFromEnum(node)];
     const name = c.tree.tokSlice(data.decl.name);
-    return failDecl(c, data.decl.name, name, "unable to translate variable declaration", .{});
+    return c.failDecl(data.decl.name, name, "unable to translate variable declaration", .{});
 }
 
 fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_nodes: []const NodeIndex, source_loc: ?TokenIndex) Error!void {
@@ -941,7 +941,7 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
                 enum_val_name = try bs.makeMangledName(c, enum_val_name);
             }
 
-            const enum_const_type_node: ?ZigNode = transType(c, scope, field.ty, .standard, field.name_tok) catch |err| switch (err) {
+            const enum_const_type_node: ?ZigNode = c.transType(scope, field.ty, .standard, field.name_tok) catch |err| switch (err) {
                 error.UnsupportedType => null,
                 else => |e| return e,
             };
@@ -951,19 +951,19 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
                 .name = enum_val_name,
                 .is_public = toplevel,
                 .type = enum_const_type_node,
-                .value = try transCreateNodeAPInt(c, val),
+                .value = try c.transCreateNodeInt(val),
             });
             if (toplevel)
-                try addTopLevelDecl(c, enum_val_name, enum_const_def)
+                try c.addTopLevelDecl(enum_val_name, enum_const_def)
             else {
                 try scope.appendNode(enum_const_def);
                 try bs.discardVariable(c, enum_val_name);
             }
         }
 
-        break :blk transType(c, scope, enum_decl.tag_ty, .standard, source_loc orelse 0) catch |err| switch (err) {
+        break :blk c.transType(scope, enum_decl.tag_ty, .standard, source_loc orelse 0) catch |err| switch (err) {
             error.UnsupportedType => {
-                return failDecl(c, source_loc orelse 0, name, "unable to translate enum integer type", .{});
+                return c.failDecl(source_loc orelse 0, name, "unable to translate enum integer type", .{});
             },
             else => |e| return e,
         };
@@ -983,7 +983,7 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     };
     const node = ZigNode.initPayload(&payload.base);
     if (toplevel) {
-        try addTopLevelDecl(c, name, node);
+        try c.addTopLevelDecl(name, node);
         if (!is_unnamed)
             try c.alias_list.append(.{ .alias = bare_name, .name = name });
     } else {
@@ -997,9 +997,9 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
 fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) Error!void {
     const node_data = c.tree.nodes.items(.data)[@intFromEnum(static_assert_node)];
 
-    const condition = c.transExpr(node_data.bin.lhs, .used) catch |err| switch (err) {
+    const condition = c.transExpr(scope, node_data.bin.lhs, .used) catch |err| switch (err) {
         error.UnsupportedTranslation, error.UnsupportedType => {
-            return try warn(c, &c.global_scope.base, c.tokenIndex(node_data.bin.lhs).?, "unable to translate _Static_assert condition", .{});
+            return try c.warn(&c.global_scope.base, c.tokenIndex(node_data.bin.lhs).?, "unable to translate _Static_assert condition", .{});
         },
         error.OutOfMemory => |e| return e,
     };
@@ -1039,8 +1039,8 @@ fn getTypeStr(c: *Context, ty: Type) ![]const u8 {
 fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualHandling, source_loc: TokenIndex) TypeError!ZigNode {
     const ty = raw_ty.canonicalize(qual_handling);
     if (ty.qual.atomic) {
-        const type_name = try getTypeStr(c, ty);
-        return fail(c, error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{type_name});
+        const type_name = try c.getTypeStr(ty);
+        return c.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{type_name});
     }
 
     switch (ty.specifier) {
@@ -1071,7 +1071,7 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
                 const decl_name = c.mapper.lookup(enum_decl.name);
                 if (c.weak_global_names.contains(decl_name)) trans_scope = &c.global_scope.base;
             }
-            try transEnumDecl(c, trans_scope, enum_decl, &.{}, source_loc);
+            try c.transEnumDecl(trans_scope, enum_decl, &.{}, source_loc);
             return ZigTag.identifier.create(c.arena, c.decl_table.get(@intFromPtr(enum_decl)).?);
         },
         .pointer => {
@@ -1080,15 +1080,15 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
             const is_fn_proto = child_type.isFunc();
             const is_const = is_fn_proto or child_type.isConst();
             const is_volatile = child_type.qual.@"volatile";
-            const elem_type = try transType(c, scope, child_type, qual_handling, source_loc);
+            const elem_type = try c.transType(scope, child_type, qual_handling, source_loc);
             const ptr_info: @FieldType(ast.Payload.Pointer, "data") = .{
                 .is_const = is_const,
                 .is_volatile = is_volatile,
                 .elem_type = elem_type,
             };
             if (is_fn_proto or
-                typeIsOpaque(c, child_type) or
-                typeWasDemotedToOpaque(c, child_type))
+                c.typeIsOpaque(child_type) or
+                c.typeWasDemotedToOpaque(child_type))
             {
                 const ptr = try ZigTag.single_pointer.create(c.arena, ptr_info);
                 return ZigTag.optional_type.create(c.arena, ptr);
@@ -1100,7 +1100,7 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
             const child_type = ty.elemType();
             const is_const = child_type.qual.@"const";
             const is_volatile = child_type.qual.@"volatile";
-            const elem_type = try transType(c, scope, child_type, qual_handling, source_loc);
+            const elem_type = try c.transType(scope, child_type, qual_handling, source_loc);
 
             return ZigTag.c_pointer.create(c.arena, .{ .is_const = is_const, .is_volatile = is_volatile, .elem_type = elem_type });
         },
@@ -1108,13 +1108,13 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
         .static_array,
         => {
             const size = ty.arrayLen().?;
-            const elem_type = try transType(c, scope, ty.elemType(), qual_handling, source_loc);
+            const elem_type = try c.transType(scope, ty.elemType(), qual_handling, source_loc);
             return ZigTag.array_type.create(c.arena, .{ .len = size, .elem_type = elem_type });
         },
         .func,
         .var_args_func,
         .old_style_func,
-        => return transFnType(c, scope, ty, ty, source_loc, .{}),
+        => return c.transFnType(scope, ty, ty, source_loc, .{}),
         .@"struct",
         .@"union",
         => {
@@ -1124,7 +1124,7 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
                 const name_id = c.mapper.lookup(record_decl.name);
                 if (c.weak_global_names.contains(name_id)) trans_scope = &c.global_scope.base;
             }
-            try transRecordDecl(c, trans_scope, ty);
+            try c.transRecordDecl(trans_scope, ty);
             const name = c.decl_table.get(@intFromPtr(ty.data.record)).?;
             return ZigTag.identifier.create(c.arena, name);
         },
@@ -1287,7 +1287,7 @@ fn transFnType(
         else
             c.mapper.lookup(param_info.name);
 
-        const type_node = try transType(c, scope, param_ty, .standard, param_info.name_tok);
+        const type_node = try c.transType(scope, param_ty, .standard, param_info.name_tok);
         param_node.* = .{
             .is_noalias = is_noalias,
             .name = param_name,
@@ -1316,9 +1316,9 @@ fn transFnType(
                 // convert primitive anyopaque to actual void (only for return type)
                 break :blk ZigTag.void_type.init();
             } else {
-                break :blk transType(c, scope, return_ty, .standard, source_loc) catch |err| switch (err) {
+                break :blk c.transType(scope, return_ty, .standard, source_loc) catch |err| switch (err) {
                     error.UnsupportedType => {
-                        try warn(c, scope, source_loc, "unsupported function proto return type", .{});
+                        try c.warn(scope, source_loc, "unsupported function proto return type", .{});
                         return err;
                     },
                     error.OutOfMemory => |e| return e,
@@ -1387,9 +1387,9 @@ fn typeIsOpaque(c: *Context, ty: Type) bool {
     return switch (ty.specifier) {
         .void => true,
         .@"struct", .@"union" => recordHasBitfield(ty.getRecord().?),
-        .typeof_type => typeIsOpaque(c, ty.data.sub_type.*),
-        .typeof_expr => typeIsOpaque(c, ty.data.expr.ty),
-        .attributed => typeIsOpaque(c, ty.data.attributed.base),
+        .typeof_type => c.typeIsOpaque(ty.data.sub_type.*),
+        .typeof_expr => c.typeIsOpaque(ty.data.expr.ty),
+        .attributed => c.typeIsOpaque(ty.data.attributed.base),
         else => false,
     };
 }
@@ -1400,16 +1400,16 @@ fn typeWasDemotedToOpaque(c: *Context, ty: Type) bool {
             const record = ty.getRecord().?;
             if (c.opaque_demotes.contains(@intFromPtr(record))) return true;
             for (record.fields) |field| {
-                if (typeWasDemotedToOpaque(c, field.ty)) return true;
+                if (c.typeWasDemotedToOpaque(field.ty)) return true;
             }
             return false;
         },
 
         .@"enum" => return c.opaque_demotes.contains(@intFromPtr(ty.data.@"enum")),
 
-        .typeof_type => return typeWasDemotedToOpaque(c, ty.data.sub_type.*),
-        .typeof_expr => return typeWasDemotedToOpaque(c, ty.data.expr.ty),
-        .attributed => return typeWasDemotedToOpaque(c, ty.data.attributed.base),
+        .typeof_type => return c.typeWasDemotedToOpaque(ty.data.sub_type.*),
+        .typeof_expr => return c.typeWasDemotedToOpaque(ty.data.expr.ty),
+        .attributed => return c.typeWasDemotedToOpaque(ty.data.attributed.base),
         else => return false,
     }
 }
@@ -1417,7 +1417,7 @@ fn typeWasDemotedToOpaque(c: *Context, ty: Type) bool {
 fn transCompoundStmt(c: *Context, scope: *Scope, compound: NodeIndex) TransError!ZigNode {
     var block_scope = try Scope.Block.init(c, scope, false);
     defer block_scope.deinit();
-    try transCompoundStmtInline(c, compound, &block_scope);
+    try c.transCompoundStmtInline(compound, &block_scope);
     return try block_scope.complete(c);
 }
 
@@ -1426,12 +1426,12 @@ fn transExpr(c: *Context, node: NodeIndex, result_used: ResultUsed) TransError!Z
     const ty = c.tree.nodes.items(.ty)[@intFromEnum(node)];
     if (c.tree.value_map.get(node)) |val| {
         // TODO handle other values
-        const int = try transCreateNodeAPInt(c, val);
+        const int = try c.transCreateNodeAPInt(val);
         const as_node = try ZigTag.as.create(c.arena, .{
-            .lhs = try transType(c, undefined, ty, .standard, undefined),
+            .lhs = try c.transType(undefined, ty, .standard, undefined),
             .rhs = int,
         });
-        return maybeSuppressResult(c, result_used, as_node);
+        return c.maybeSuppressResult(result_used, as_node);
     }
     const node_tags = c.tree.nodes.items(.tag);
     switch (node_tags[@intFromEnum(node)]) {
