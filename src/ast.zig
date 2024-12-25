@@ -455,6 +455,24 @@ pub const Node = extern union {
         }
         return false;
     }
+
+    pub fn isBoolRes(res: Node) bool {
+        switch (res.tag()) {
+            .@"or",
+            .@"and",
+            .equal,
+            .not_equal,
+            .less_than,
+            .less_than_equal,
+            .greater_than,
+            .greater_than_equal,
+            .not,
+            .false_literal,
+            .true_literal,
+            => return true,
+            else => return false,
+        }
+    }
 };
 
 pub const Payload = struct {

@@ -554,6 +554,10 @@ fn prepopulateGlobalNameTable(c: *Context) !void {
     }
 }
 
+// =======================
+// Declaration translation
+// =======================
+
 fn transTopLevelDecls(c: *Context) !void {
     for (c.tree.root_decls) |node| {
         try c.transDecl(&c.global_scope.base, node);
@@ -681,10 +685,10 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
 
     const container_kind: ZigTag = if (record_ty.is(.@"union")) .@"union" else .@"struct";
-    const container_kind_name: []const u8 = @tagName(container_kind);
+    const container_kind_name = @tagName(container_kind);
 
     var is_unnamed = false;
-    var bare_name: []const u8 = c.mapper.lookup(record_decl.name);
+    var bare_name = c.mapper.lookup(record_decl.name);
     var name = bare_name;
 
     if (c.unnamed_typedefs.get(@intFromPtr(record_decl))) |typedef_name| {
@@ -919,7 +923,7 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
 
     var is_unnamed = false;
-    var bare_name: []const u8 = c.mapper.lookup(enum_decl.name);
+    var bare_name = c.mapper.lookup(enum_decl.name);
     var name = bare_name;
     if (c.unnamed_typedefs.get(@intFromPtr(enum_decl))) |typedef_name| {
         bare_name = typedef_name;
@@ -936,7 +940,7 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
 
     const enum_type_node = if (!enum_decl.isIncomplete()) blk: {
         for (enum_decl.fields, field_nodes) |field, field_node| {
-            var enum_val_name: []const u8 = c.mapper.lookup(field.name);
+            var enum_val_name = c.mapper.lookup(field.name);
             if (!toplevel) {
                 enum_val_name = try bs.makeMangledName(c, enum_val_name);
             }
@@ -1027,6 +1031,10 @@ fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) 
     const assert_node = try ZigTag.static_assert.create(c.arena, .{ .lhs = condition, .rhs = diagnostic });
     try scope.appendNode(assert_node);
 }
+
+// ================
+// Type translation
+// ================
 
 fn getTypeStr(c: *Context, ty: Type) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
@@ -1353,27 +1361,9 @@ fn transFnType(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn transStmt(c: *Context, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
-    const node_tags = c.tree.nodes.items(.tag);
-    switch (node_tags[@intFromEnum(stmt)]) {
-        .static_assert => {
-            try transStaticAssert(c, scope, stmt);
-            return ZigTag.declaration.init();
-        },
-        else => return fail(c, error.UnsupportedTranslation, c.tokenIndex(stmt).?, "TODO implement translation of stmt {s}", .{@tagName(node_tags[@intFromEnum(stmt)])}),
-    }
-}
-
-fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
-    const stmts = c.tree.childNodes(compound);
-    for (stmts) |stmt| {
-        const result = try transStmt(c, &block.base, stmt);
-        switch (result.tag()) {
-            .declaration, .empty_block => {},
-            else => try block.statements.append(result),
-        }
-    }
-}
+// ============
+// Type helpers
+// ============
 
 fn recordHasBitfield(record: *const Type.Record) bool {
     if (record.isIncomplete()) return false;
@@ -1414,6 +1404,71 @@ fn typeWasDemotedToOpaque(c: *Context, ty: Type) bool {
     }
 }
 
+/// Check if an expression is ultimately a reference to a function declaration
+/// (which means it should not be unwrapped with `.?` in translated code)
+fn isFunctionDeclRef(c: *Context, base_node: NodeIndex) bool {
+    const node_tags = c.tree.nodes.items(.tag);
+    const node_data = c.tree.nodes.items(.data);
+    var node = base_node;
+    while (true) switch (node_tags[@intFromEnum(node)]) {
+        .paren_expr => {
+            node = node_data[@intFromEnum(node)].un;
+        },
+        .decl_ref_expr => {
+            const res_ty = c.tree.nodes.items(.ty)[@intFromEnum(node)];
+            return res_ty.isFunc();
+        },
+        .implicit_cast => {
+            const cast = node_data[@intFromEnum(node)].cast;
+            if (cast.kind == .function_to_pointer) {
+                node = cast.operand;
+                continue;
+            }
+            return false;
+        },
+        .addr_of_expr, .deref_expr => {
+            node = node_data[@intFromEnum(node)].un;
+        },
+        .generic_expr, .generic_expr_one => {
+            const child_nodes = c.tree.childNodes(node);
+            const chosen = child_nodes[1];
+            node = chosen;
+        },
+        else => return false,
+    };
+}
+
+// =====================
+// Statement translation
+// =====================
+
+fn transStmt(c: *Context, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
+    const node_tags = c.tree.nodes.items(.tag);
+    switch (node_tags[@intFromEnum(stmt)]) {
+        .compound_stmt, .compound_stmt_two => {
+            return c.transCompoundStmt(scope, stmt);
+        },
+        .static_assert => {
+            try c.transStaticAssert(scope, stmt);
+            return ZigTag.declaration.init();
+        },
+        .return_stmt => return c.transReturnStmt(scope, stmt),
+        .null_stmt => return ZigTag.empty_block.init(),
+        else => return c.fail(error.UnsupportedTranslation, c.tokenIndex(stmt).?, "TODO implement translation of stmt {s}", .{@tagName(node_tags[@intFromEnum(stmt)])}),
+    }
+}
+
+fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
+    const stmts = c.tree.childNodes(compound);
+    for (stmts) |stmt| {
+        const result = try c.transStmt(&block.base, stmt);
+        switch (result.tag()) {
+            .declaration, .empty_block => {},
+            else => try block.statements.append(result),
+        }
+    }
+}
+
 fn transCompoundStmt(c: *Context, scope: *Scope, compound: NodeIndex) TransError!ZigNode {
     var block_scope = try Scope.Block.init(c, scope, false);
     defer block_scope.deinit();
@@ -1421,26 +1476,110 @@ fn transCompoundStmt(c: *Context, scope: *Scope, compound: NodeIndex) TransError
     return try block_scope.complete(c);
 }
 
-fn transExpr(c: *Context, node: NodeIndex, result_used: ResultUsed) TransError!ZigNode {
+fn transReturnStmt(c: *Context, scope: *Scope, return_stmt: NodeIndex) TransError!ZigNode {
+    const data = c.tree.nodes.items(.data)[@intFromEnum(return_stmt)];
+    if (data.un == .none) return ZigTag.return_void.init();
+
+    var rhs = try c.transExprCoercing(scope, data.un);
+    const return_ty = scope.findBlockReturnType();
+    if (rhs.isBoolRes() and !return_ty.is(.bool)) {
+        rhs = try ZigTag.int_from_bool.create(c.arena, rhs);
+    }
+    return ZigTag.@"return".create(c.arena, rhs);
+}
+
+// ======================
+// Expression translation
+// ======================
+
+fn transExpr(c: *Context, scope: *Scope, node: NodeIndex, used: ResultUsed) TransError!ZigNode {
     std.debug.assert(node != .none);
     const ty = c.tree.nodes.items(.ty)[@intFromEnum(node)];
     if (c.tree.value_map.get(node)) |val| {
         // TODO handle other values
-        const int = try c.transCreateNodeAPInt(val);
+        const int = try c.transCreateNodeInt(val);
         const as_node = try ZigTag.as.create(c.arena, .{
             .lhs = try c.transType(undefined, ty, .standard, undefined),
             .rhs = int,
         });
-        return c.maybeSuppressResult(result_used, as_node);
+        return c.maybeSuppressResult(used, as_node);
     }
     const node_tags = c.tree.nodes.items(.tag);
     switch (node_tags[@intFromEnum(node)]) {
+        .explicit_cast, .implicit_cast => return c.transCastExpr(scope, node, used),
+        .decl_ref_expr => return c.transDeclRefExpr(scope, node),
         else => unreachable, // Not an expression.
     }
-    return .none;
 }
 
-fn transCreateNodeAPInt(c: *Context, int: aro.Value) !ZigNode {
+/// Same as `transExpr` but with the knowledge that the operand will be type coerced, and therefore
+/// an `@as` would be redundant. This is used to prevent redundant `@as` in integer literals.
+fn transExprCoercing(c: *Context, scope: *Scope, expr: NodeIndex) TransError!ZigNode {
+    // TODO bypass casts
+    return c.transExpr(scope, expr, .used);
+}
+
+fn transCastExpr(c: *Context, scope: *Scope, cast_node: NodeIndex, used: ResultUsed) TransError!ZigNode {
+    const cast = c.tree.nodes.items(.data)[@intFromEnum(cast_node)].cast;
+    switch (cast.kind) {
+        .lval_to_rval, .no_op, .function_to_pointer => {
+            const sub_expr_node = try c.transExpr(scope, cast.operand, .used);
+            return c.maybeSuppressResult(used, sub_expr_node);
+        },
+        else => return c.fail(error.UnsupportedTranslation, c.tokenIndex(cast_node).?, "TODO translate {s} cast", .{@tagName(cast.kind)}),
+    }
+}
+
+fn transDeclRefExpr(c: *Context, scope: *Scope, decl_ref_node: NodeIndex) TransError!ZigNode {
+    const decl_ref = c.tree.nodes.items(.data)[@intFromEnum(decl_ref_node)].decl_ref;
+
+    const name = c.tree.tokSlice(decl_ref);
+    const mangled_name = scope.getAlias(name);
+    // TODO
+    // const decl_is_var = @as(*const clang.Decl, @ptrCast(value_decl)).getKind() == .Var;
+    // const potential_local_extern = if (decl_is_var) ((@as(*const clang.VarDecl, @ptrCast(value_decl)).getStorageClass() == .Extern) and (scope.id != .root)) else false;
+    const decl_is_var = false;
+    const potential_local_extern = false;
+
+    var confirmed_local_extern = false;
+    var ref_expr = val: {
+        if (c.isFunctionDeclRef(decl_ref_node)) {
+            break :val try ZigTag.fn_identifier.create(c.arena, mangled_name);
+        } else if (potential_local_extern) {
+            if (scope.getLocalExternAlias(name)) |v| {
+                confirmed_local_extern = true;
+                break :val try ZigTag.identifier.create(c.arena, v);
+            } else {
+                break :val try ZigTag.identifier.create(c.arena, mangled_name);
+            }
+        } else {
+            break :val try ZigTag.identifier.create(c.arena, mangled_name);
+        }
+    };
+
+    if (decl_is_var) {
+        // const var_decl: NodeIndex = .none; // TODO
+        if (false) { //var_decl.isStaticLocal()) {
+            ref_expr = try ZigTag.field_access.create(c.arena, .{
+                .lhs = ref_expr,
+                .field_name = Scope.Block.static_inner_name,
+            });
+        } else if (confirmed_local_extern) {
+            ref_expr = try ZigTag.field_access.create(c.arena, .{
+                .lhs = ref_expr,
+                .field_name = name, // by necessity, name will always == mangled_name
+            });
+        }
+    }
+    scope.skipVariableDiscard(mangled_name);
+    return ref_expr;
+}
+
+// =====================
+// Node creation helpers
+// =====================
+
+fn transCreateNodeInt(c: *Context, int: aro.Value) !ZigNode {
     var space: aro.Interner.Tag.Int.BigIntSpace = undefined;
     var big = c.comp.interner.get(int.ref()).toBigInt(&space);
     const is_negative = !big.positive;
@@ -1453,6 +1592,10 @@ fn transCreateNodeAPInt(c: *Context, int: aro.Value) !ZigNode {
     if (is_negative) return ZigTag.negate.create(c.arena, res);
     return res;
 }
+
+// =================
+// Macro translation
+// =================
 
 const PatternList = struct {
     patterns: []Pattern,
