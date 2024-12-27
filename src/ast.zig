@@ -785,7 +785,7 @@ pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
     defer ctx.tokens.deinit(gpa);
 
     // Estimate that each top level node has 10 child nodes.
-    const estimated_node_count = nodes.len * 10;
+    const estimated_node_count = nodes.len * 10 + 1; // +1 for the .root node
     try ctx.nodes.ensureTotalCapacity(gpa, estimated_node_count);
     // Estimate that each each node has 2 tokens.
     const estimated_tokens_count = estimated_node_count * 2;

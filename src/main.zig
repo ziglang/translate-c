@@ -86,15 +86,8 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         return;
     }
 
-    // TODO this should probably pass an arraylist for the generated source.
-    var zig_tree = try Translator.translate(gpa, d.comp, c_tree);
-    defer {
-        gpa.free(zig_tree.source);
-        zig_tree.deinit(gpa);
-    }
-
-    const formatted = try zig_tree.render(gpa);
-    defer gpa.free(formatted);
+    const rendered_zig = try Translator.translate(gpa, d.comp, c_tree);
+    defer gpa.free(rendered_zig);
 
     var close_out_file = false;
     var out_file_path: []const u8 = "<stdout>";
@@ -109,7 +102,7 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         close_out_file = true;
         out_file_path = path;
     }
-    out_file.writeAll(formatted) catch |err|
+    out_file.writeAll(rendered_zig) catch |err|
         return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
 
     if (fast_exit) process.exit(0);

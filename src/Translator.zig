@@ -13,6 +13,7 @@ const Type = aro.Type;
 const ast = @import("ast.zig");
 const ZigNode = ast.Node;
 const ZigTag = ZigNode.Tag;
+const builtins = @import("builtins.zig");
 const Scope = @import("Scope.zig");
 
 const Translator = @This();
@@ -54,6 +55,9 @@ pattern_list: PatternList,
 tree: Tree,
 comp: *aro.Compilation,
 mapper: aro.TypeMapper,
+
+rendered_builtins: std.EnumSet(builtins.Builtin) = .{},
+render_buf: std.ArrayList(u8),
 
 fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
@@ -137,7 +141,7 @@ pub fn translate(
     gpa: mem.Allocator,
     comp: *aro.Compilation,
     tree: aro.Tree,
-) !std.zig.Ast {
+) ![]u8 {
     const mapper = tree.comp.string_interner.getFastTypeMapper(tree.comp.gpa) catch tree.comp.string_interner.getSlowTypeMapper();
     defer mapper.deinit(tree.comp.gpa);
 
@@ -145,7 +149,7 @@ pub fn translate(
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    var context: Translator = .{
+    var translator: Translator = .{
         .gpa = gpa,
         .arena = arena,
         .alias_list = .empty,
@@ -154,39 +158,39 @@ pub fn translate(
         .comp = comp,
         .mapper = mapper,
         .tree = tree,
+        .render_buf = .init(gpa),
     };
-    context.global_scope.* = Scope.Root.init(&context);
+    translator.global_scope.* = Scope.Root.init(&translator);
     defer {
-        context.decl_table.deinit(gpa);
-        context.alias_list.deinit(gpa);
-        context.global_names.deinit(gpa);
-        context.weak_global_names.deinit(gpa);
-        context.opaque_demotes.deinit(gpa);
-        context.unnamed_typedefs.deinit(gpa);
-        context.typedefs.deinit(gpa);
-        context.global_scope.deinit();
-        context.pattern_list.deinit(gpa);
+        translator.decl_table.deinit(gpa);
+        translator.alias_list.deinit(gpa);
+        translator.global_names.deinit(gpa);
+        translator.weak_global_names.deinit(gpa);
+        translator.opaque_demotes.deinit(gpa);
+        translator.unnamed_typedefs.deinit(gpa);
+        translator.typedefs.deinit(gpa);
+        translator.global_scope.deinit();
+        translator.pattern_list.deinit(gpa);
+        translator.render_buf.deinit();
     }
 
-    inline for (@typeInfo(std.zig.c_builtins).@"struct".decls) |decl| {
-        const builtin_fn = try ZigTag.pub_var_simple.create(arena, .{
-            .name = decl.name,
-            .init = try ZigTag.import_c_builtin.create(arena, decl.name),
-        });
-        try addTopLevelDecl(&context, decl.name, builtin_fn);
-    }
+    try prepopulateGlobalNameTable(&translator);
+    try transTopLevelDecls(&translator);
 
-    try prepopulateGlobalNameTable(&context);
-    try transTopLevelDecls(&context);
-
-    for (context.alias_list.items) |alias| {
-        if (!context.global_scope.sym_table.contains(alias.alias)) {
+    for (translator.alias_list.items) |alias| {
+        if (!translator.global_scope.sym_table.contains(alias.alias)) {
             const node = try ZigTag.alias.create(arena, .{ .actual = alias.alias, .mangled = alias.name });
-            try addTopLevelDecl(&context, alias.alias, node);
+            try addTopLevelDecl(&translator, alias.alias, node);
         }
     }
 
-    return ast.render(gpa, context.global_scope.nodes.items);
+    var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
+    defer {
+        gpa.free(zig_ast.source);
+        zig_ast.deinit(gpa);
+    }
+    try zig_ast.renderToArrayList(&translator.render_buf, .{});
+    return translator.render_buf.toOwnedSlice();
 }
 
 fn prepopulateGlobalNameTable(t: *Translator) !void {
@@ -1352,6 +1356,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) T
 
         .shl_expr => return t.transShiftExpr(scope, expr, .shl, used),
         .shr_expr => return t.transShiftExpr(scope, expr, .shr, used),
+
+        .builtin_call_expr => return t.transBuiltinCall(scope, expr, used),
+        .builtin_call_expr_one => return t.transBuiltinCall(scope, expr, used),
         else => unreachable, // Not an expression.
     }
 }
@@ -1580,6 +1587,58 @@ fn transPointerArithmeticSignedOp(
     const bitcast_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
 
     return t.transCreateNodeInfixOp(if (is_add) .add else .sub, lhs_node, bitcast_node, used);
+}
+
+fn transBuiltinCall(
+    t: *Translator,
+    scope: *Scope,
+    call_node: NodeIndex,
+    used: ResultUsed,
+) TransError!ZigNode {
+    // TODO would be nice to have a helper to extract the builtin name
+    const builtin_name, const arg_nodes = switch (t.nodeTag(call_node)) {
+        .builtin_call_expr => blk: {
+            const range = t.nodeData(call_node).range;
+            const name = t.tree.tokSlice(@intFromEnum(t.tree.data[range.start]));
+            const arg_nodes = t.tree.data[range.start + 1 .. range.end];
+            break :blk .{ name, arg_nodes };
+        },
+        .builtin_call_expr_one => blk: {
+            const decl = t.nodeData(call_node).decl;
+            const name = t.tree.tokSlice(decl.name);
+            const ptr: [*]const NodeIndex = @ptrCast(&decl.node);
+            const slice = ptr[0..1];
+            const end = std.mem.indexOfScalar(NodeIndex, slice, .none) orelse 1;
+            const arg_nodes = slice[0..end];
+            break :blk .{ name, arg_nodes };
+        },
+        else => unreachable,
+    };
+    const builtin = std.meta.stringToEnum(builtins.Builtin, builtin_name) orelse {
+        const call_loc = 0; // TODO builtin call source location
+        return t.fail(error.UnsupportedTranslation, call_loc, "TODO implement function '{s}' in std.zig.c_builtins", .{builtin_name});
+    };
+
+    if (builtin.source()) |source| {
+        if (!t.rendered_builtins.contains(builtin)) {
+            t.rendered_builtins.insert(builtin);
+            try t.render_buf.appendSlice(source);
+        }
+
+        const args = try t.arena.alloc(ZigNode, arg_nodes.len);
+        for (arg_nodes, args) |arg_node, *arg| {
+            arg.* = try t.transExpr(scope, arg_node, .used);
+        }
+
+        const res = try ZigTag.call.create(t.arena, .{
+            .lhs = try ZigTag.fn_identifier.create(t.arena, builtin_name),
+            .args = args,
+        });
+        if (t.nodeType(call_node).is(.void)) return res;
+        return t.maybeSuppressResult(used, res);
+    }
+
+    @panic("TODO transBulitinCall others");
 }
 
 // =====================
