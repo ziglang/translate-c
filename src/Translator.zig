@@ -15,7 +15,7 @@ const ZigNode = ast.Node;
 const ZigTag = ZigNode.Tag;
 const Scope = @import("Scope.zig");
 
-const Context = @This();
+const Translator = @This();
 
 pub const Error = std.mem.Allocator.Error;
 pub const MacroProcessingError = Error || error{UnexpectedMacroToken};
@@ -55,82 +55,82 @@ tree: Tree,
 comp: *aro.Compilation,
 mapper: aro.TypeMapper,
 
-fn getMangle(c: *Context) u32 {
-    c.mangle_count += 1;
-    return c.mangle_count;
+fn getMangle(t: *Translator) u32 {
+    t.mangle_count += 1;
+    return t.mangle_count;
 }
 
 /// Convert an aro TokenIndex to a 'file:line:column' string
-fn locStr(c: *Context, tok_idx: TokenIndex) ![]const u8 {
-    const token_loc = c.tree.tokens.items(.loc)[tok_idx];
-    const source = c.comp.getSource(token_loc.id);
+fn locStr(t: *Translator, tok_idx: TokenIndex) ![]const u8 {
+    const token_loc = t.tree.tokens.items(.loc)[tok_idx];
+    const source = t.comp.getSource(token_loc.id);
     const line_col = source.lineCol(token_loc);
     const filename = source.path;
 
     const line = source.physicalLine(token_loc);
     const col = line_col.col;
 
-    return std.fmt.allocPrint(c.arena, "{s}:{d}:{d}", .{ filename, line, col });
+    return std.fmt.allocPrint(t.arena, "{s}:{d}:{d}", .{ filename, line, col });
 }
 
-fn maybeSuppressResult(c: *Context, used: ResultUsed, result: ZigNode) TransError!ZigNode {
+fn maybeSuppressResult(t: *Translator, used: ResultUsed, result: ZigNode) TransError!ZigNode {
     if (used == .used) return result;
-    return ZigTag.discard.create(c.arena, .{ .should_skip = false, .value = result });
+    return ZigTag.discard.create(t.arena, .{ .should_skip = false, .value = result });
 }
 
-fn addTopLevelDecl(c: *Context, name: []const u8, decl_node: ZigNode) !void {
-    const gop = try c.global_scope.sym_table.getOrPut(c.gpa, name);
+fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
+    const gop = try t.global_scope.sym_table.getOrPut(t.gpa, name);
     if (!gop.found_existing) {
         gop.value_ptr.* = decl_node;
-        try c.global_scope.nodes.append(c.gpa, decl_node);
+        try t.global_scope.nodes.append(t.gpa, decl_node);
     }
 }
 
 fn fail(
-    c: *Context,
+    t: *Translator,
     err: anytype,
     source_loc: TokenIndex,
     comptime format: []const u8,
     args: anytype,
 ) (@TypeOf(err) || error{OutOfMemory}) {
-    try c.warn(&c.global_scope.base, source_loc, format, args);
+    try t.warn(&t.global_scope.base, source_loc, format, args);
     return err;
 }
 
-fn failDecl(c: *Context, loc: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
+fn failDecl(t: *Translator, loc: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
     // location
     // pub const name = @compileError(msg);
-    const fail_msg = try std.fmt.allocPrint(c.arena, format, args);
-    try c.addTopLevelDecl(name, try ZigTag.fail_decl.create(c.arena, .{ .actual = name, .mangled = fail_msg }));
-    const str = try c.locStr(loc);
-    const location_comment = try std.fmt.allocPrint(c.arena, "// {s}", .{str});
-    try c.global_scope.nodes.append(c.gpa, try ZigTag.warning.create(c.arena, location_comment));
+    const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
+    try t.addTopLevelDecl(name, try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg }));
+    const str = try t.locStr(loc);
+    const location_comment = try std.fmt.allocPrint(t.arena, "// {s}", .{str});
+    try t.global_scope.nodes.append(t.gpa, try ZigTag.warning.create(t.arena, location_comment));
 }
 
-fn warn(c: *Context, scope: *Scope, loc: TokenIndex, comptime format: []const u8, args: anytype) !void {
-    const str = try c.locStr(loc);
-    const value = try std.fmt.allocPrint(c.arena, "// {s}: warning: " ++ format, .{str} ++ args);
-    try scope.appendNode(try ZigTag.warning.create(c.arena, value));
+fn warn(t: *Translator, scope: *Scope, loc: TokenIndex, comptime format: []const u8, args: anytype) !void {
+    const str = try t.locStr(loc);
+    const value = try std.fmt.allocPrint(t.arena, "// {s}: warning: " ++ format, .{str} ++ args);
+    try scope.appendNode(try ZigTag.warning.create(t.arena, value));
 }
 
-fn nodeLoc(c: *Context, node: NodeIndex) TokenIndex {
-    const token_index = c.tree.nodes.items(.loc)[@intFromEnum(node)];
+fn nodeLoc(t: *Translator, node: NodeIndex) TokenIndex {
+    const token_index = t.tree.nodes.items(.loc)[@intFromEnum(node)];
     return switch (token_index) {
         .none => unreachable,
         else => @intFromEnum(token_index),
     };
 }
 
-fn nodeTag(c: *Context, node: NodeIndex) Tree.Tag {
-    return c.tree.nodes.items(.tag)[@intFromEnum(node)];
+fn nodeTag(t: *Translator, node: NodeIndex) Tree.Tag {
+    return t.tree.nodes.items(.tag)[@intFromEnum(node)];
 }
 
-fn nodeType(c: *Context, node: NodeIndex) Type {
-    return c.tree.nodes.items(.ty)[@intFromEnum(node)];
+fn nodeType(t: *Translator, node: NodeIndex) Type {
+    return t.tree.nodes.items(.ty)[@intFromEnum(node)];
 }
 
-fn nodeData(c: *Context, node: NodeIndex) Tree.Node.Data {
-    return c.tree.nodes.items(.data)[@intFromEnum(node)];
+fn nodeData(t: *Translator, node: NodeIndex) Tree.Node.Data {
+    return t.tree.nodes.items(.data)[@intFromEnum(node)];
 }
 
 pub fn translate(
@@ -145,7 +145,7 @@ pub fn translate(
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    var context: Context = .{
+    var context: Translator = .{
         .gpa = gpa,
         .arena = arena,
         .alias_list = .empty,
@@ -189,11 +189,11 @@ pub fn translate(
     return ast.render(gpa, context.global_scope.nodes.items);
 }
 
-fn prepopulateGlobalNameTable(c: *Context) !void {
-    const node_tags = c.tree.nodes.items(.tag);
-    const node_types = c.tree.nodes.items(.ty);
-    const node_data = c.tree.nodes.items(.data);
-    for (c.tree.root_decls) |node| {
+fn prepopulateGlobalNameTable(t: *Translator) !void {
+    const node_tags = t.tree.nodes.items(.tag);
+    const node_types = t.tree.nodes.items(.ty);
+    const node_data = t.tree.nodes.items(.data);
+    for (t.tree.root_decls) |node| {
         const data = node_data[@intFromEnum(node)];
         switch (node_tags[@intFromEnum(node)]) {
             .typedef => {},
@@ -211,14 +211,14 @@ fn prepopulateGlobalNameTable(c: *Context) !void {
                 const raw_ty = node_types[@intFromEnum(node)];
                 const ty = raw_ty.canonicalize(.standard);
                 const name_id = if (ty.isRecord()) ty.data.record.name else ty.data.@"enum".name;
-                const decl_name = c.mapper.lookup(name_id);
+                const decl_name = t.mapper.lookup(name_id);
                 const container_prefix = if (ty.is(.@"struct")) "struct" else if (ty.is(.@"union")) "union" else "enum";
-                const prefixed_name = try std.fmt.allocPrint(c.arena, "{s}_{s}", .{ container_prefix, decl_name });
+                const prefixed_name = try std.fmt.allocPrint(t.arena, "{s}_{s}", .{ container_prefix, decl_name });
                 // `decl_name` and `prefixed_name` are the preferred names for this type.
                 // However, we can name it anything else if necessary, so these are "weak names".
-                try c.weak_global_names.ensureUnusedCapacity(c.gpa, 2);
-                c.weak_global_names.putAssumeCapacity(decl_name, {});
-                c.weak_global_names.putAssumeCapacity(prefixed_name, {});
+                try t.weak_global_names.ensureUnusedCapacity(t.gpa, 2);
+                t.weak_global_names.putAssumeCapacity(decl_name, {});
+                t.weak_global_names.putAssumeCapacity(prefixed_name, {});
             },
 
             .fn_proto,
@@ -236,8 +236,8 @@ fn prepopulateGlobalNameTable(c: *Context) !void {
             .threadlocal_extern_var,
             .threadlocal_static_var,
             => {
-                const decl_name = c.tree.tokSlice(data.decl.name);
-                try c.global_names.put(c.gpa, decl_name, {});
+                const decl_name = t.tree.tokSlice(data.decl.name);
+                try t.global_names.put(t.gpa, decl_name, {});
             },
             .static_assert => {},
             else => unreachable,
@@ -249,16 +249,16 @@ fn prepopulateGlobalNameTable(c: *Context) !void {
 // Declaration translation
 // =======================
 
-fn transTopLevelDecls(c: *Context) !void {
-    for (c.tree.root_decls) |node| {
-        try c.transDecl(&c.global_scope.base, node);
+fn transTopLevelDecls(t: *Translator) !void {
+    for (t.tree.root_decls) |node| {
+        try t.transDecl(&t.global_scope.base, node);
     }
 }
 
-fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
-    switch (c.nodeTag(decl)) {
+fn transDecl(t: *Translator, scope: *Scope, decl: NodeIndex) !void {
+    switch (t.nodeTag(decl)) {
         .typedef => {
-            try c.transTypeDef(scope, decl);
+            try t.transTypeDef(scope, decl);
         },
 
         .struct_decl_two,
@@ -266,13 +266,13 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .struct_decl,
         .union_decl,
         => {
-            try c.transRecordDecl(scope, c.nodeType(decl));
+            try t.transRecordDecl(scope, t.nodeType(decl));
         },
 
         .enum_decl_two, .enum_decl => {
-            const fields = c.tree.childNodes(decl);
-            const enum_decl = c.nodeType(decl).canonicalize(.standard).data.@"enum";
-            try c.transEnumDecl(scope, enum_decl, fields, c.nodeLoc(decl));
+            const fields = t.tree.childNodes(decl);
+            const enum_decl = t.nodeType(decl).canonicalize(.standard).data.@"enum";
+            try t.transEnumDecl(scope, enum_decl, fields, t.nodeLoc(decl));
         },
 
         .enum_field_decl,
@@ -292,7 +292,7 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .inline_fn_def,
         .inline_static_fn_def,
         => {
-            try c.transFnDecl(decl, true);
+            try t.transFnDecl(decl, true);
         },
 
         .@"var",
@@ -302,36 +302,36 @@ fn transDecl(c: *Context, scope: *Scope, decl: NodeIndex) !void {
         .threadlocal_extern_var,
         .threadlocal_static_var,
         => {
-            try c.transVarDecl(decl);
+            try t.transVarDecl(decl);
         },
         .static_assert => {
-            try c.transStaticAssert(&c.global_scope.base, decl);
+            try t.transStaticAssert(&t.global_scope.base, decl);
         },
         else => unreachable,
     }
 }
 
-fn transTypeDef(c: *Context, scope: *Scope, typedef_decl: NodeIndex) Error!void {
-    const ty = c.nodeType(typedef_decl);
-    const decl = c.nodeData(typedef_decl).decl;
+fn transTypeDef(t: *Translator, scope: *Scope, typedef_decl: NodeIndex) Error!void {
+    const ty = t.nodeType(typedef_decl);
+    const decl = t.nodeData(typedef_decl).decl;
 
     const toplevel = scope.id == .root;
-    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
+    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
 
-    var name: []const u8 = c.tree.tokSlice(decl.name);
-    try c.typedefs.put(c.gpa, name, {});
+    var name: []const u8 = t.tree.tokSlice(decl.name);
+    try t.typedefs.put(t.gpa, name, {});
 
     if (!toplevel) name = try bs.makeMangledName(name);
 
     const typedef_loc = decl.name;
-    const init_node = c.transType(scope, ty, .standard, typedef_loc) catch |err| switch (err) {
+    const init_node = t.transType(scope, ty, .standard, typedef_loc) catch |err| switch (err) {
         error.UnsupportedType => {
-            return c.failDecl(typedef_loc, name, "unable to resolve typedef child type", .{});
+            return t.failDecl(typedef_loc, name, "unable to resolve typedef child type", .{});
         },
         error.OutOfMemory => |e| return e,
     };
 
-    const payload = try c.arena.create(ast.Payload.SimpleVarDecl);
+    const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
         .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(toplevel)] },
         .data = .{
@@ -342,7 +342,7 @@ fn transTypeDef(c: *Context, scope: *Scope, typedef_decl: NodeIndex) Error!void 
     const node = ZigNode.initPayload(&payload.base);
 
     if (toplevel) {
-        try c.addTopLevelDecl(name, node);
+        try t.addTopLevelDecl(name, node);
     } else {
         try scope.appendNode(node);
         if (node.tag() != .pub_var_simple) {
@@ -351,62 +351,62 @@ fn transTypeDef(c: *Context, scope: *Scope, typedef_decl: NodeIndex) Error!void 
     }
 }
 
-fn mangleWeakGlobalName(c: *Context, want_name: []const u8) ![]const u8 {
+fn mangleWeakGlobalName(t: *Translator, want_name: []const u8) ![]const u8 {
     var cur_name = want_name;
 
-    if (!c.weak_global_names.contains(want_name)) {
+    if (!t.weak_global_names.contains(want_name)) {
         // This type wasn't noticed by the name detection pass, so nothing has been treating this as
         // a weak global name. We must mangle it to avoid conflicts with locals.
-        cur_name = try std.fmt.allocPrint(c.arena, "{s}_{d}", .{ want_name, c.getMangle() });
+        cur_name = try std.fmt.allocPrint(t.arena, "{s}_{d}", .{ want_name, t.getMangle() });
     }
 
-    while (c.global_names.contains(cur_name)) {
-        cur_name = try std.fmt.allocPrint(c.arena, "{s}_{d}", .{ want_name, c.getMangle() });
+    while (t.global_names.contains(cur_name)) {
+        cur_name = try std.fmt.allocPrint(t.arena, "{s}_{d}", .{ want_name, t.getMangle() });
     }
     return cur_name;
 }
 
-fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
+fn transRecordDecl(t: *Translator, scope: *Scope, record_ty: Type) Error!void {
     const record_decl = record_ty.getRecord().?;
-    if (c.decl_table.get(@intFromPtr(record_decl))) |_|
+    if (t.decl_table.get(@intFromPtr(record_decl))) |_|
         return; // Avoid processing this decl twice
     const toplevel = scope.id == .root;
-    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
+    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
 
     const container_kind: ZigTag = if (record_ty.is(.@"union")) .@"union" else .@"struct";
     const container_kind_name = @tagName(container_kind);
 
-    var bare_name = c.mapper.lookup(record_decl.name);
+    var bare_name = t.mapper.lookup(record_decl.name);
     const is_unnamed = bare_name[0] == '(';
     var name = bare_name;
 
-    if (c.unnamed_typedefs.get(@intFromPtr(record_decl))) |typedef_name| {
+    if (t.unnamed_typedefs.get(@intFromPtr(record_decl))) |typedef_name| {
         bare_name = typedef_name;
         name = typedef_name;
     } else {
-        if (record_ty.isAnonymousRecord(c.comp)) {
-            bare_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{c.getMangle()});
+        if (record_ty.isAnonymousRecord(t.comp)) {
+            bare_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{t.getMangle()});
         }
-        name = try std.fmt.allocPrint(c.arena, "{s}_{s}", .{ container_kind_name, bare_name });
+        name = try std.fmt.allocPrint(t.arena, "{s}_{s}", .{ container_kind_name, bare_name });
         if (toplevel and !is_unnamed) {
-            name = try c.mangleWeakGlobalName(name);
+            name = try t.mangleWeakGlobalName(name);
         }
     }
     if (!toplevel) name = try bs.makeMangledName(name);
-    try c.decl_table.putNoClobber(c.gpa, @intFromPtr(record_decl), name);
+    try t.decl_table.putNoClobber(t.gpa, @intFromPtr(record_decl), name);
 
     const is_pub = toplevel and !is_unnamed;
     const init_node = blk: {
         if (record_decl.isIncomplete()) {
-            try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
+            try t.opaque_demotes.put(t.gpa, @intFromPtr(record_decl), {});
             break :blk ZigTag.opaque_literal.init();
         }
 
-        var fields = try std.ArrayList(ast.Payload.Record.Field).initCapacity(c.gpa, record_decl.fields.len);
+        var fields = try std.ArrayList(ast.Payload.Record.Field).initCapacity(t.gpa, record_decl.fields.len);
         defer fields.deinit();
 
         // TODO: Add support for flexible array field functions
-        var functions = std.ArrayList(ZigNode).init(c.gpa);
+        var functions = std.ArrayList(ZigNode).init(t.gpa);
         defer functions.deinit();
 
         var unnamed_field_count: u32 = 0;
@@ -424,20 +424,20 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
 
             // Demote record to opaque if it contains a bitfield
             if (!field.isRegularField()) {
-                try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
-                try c.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
+                try t.opaque_demotes.put(t.gpa, @intFromPtr(record_decl), {});
+                try t.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
                 break :blk ZigTag.opaque_literal.init();
             }
 
-            var field_name = c.mapper.lookup(field.name);
+            var field_name = t.mapper.lookup(field.name);
             if (!field.isNamed()) {
-                field_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{unnamed_field_count});
+                field_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{unnamed_field_count});
                 unnamed_field_count += 1;
             }
-            const field_type = c.transType(scope, field.ty, .preserve_quals, field_loc) catch |err| switch (err) {
+            const field_type = t.transType(scope, field.ty, .preserve_quals, field_loc) catch |err| switch (err) {
                 error.UnsupportedType => {
-                    try c.opaque_demotes.put(c.gpa, @intFromPtr(record_decl), {});
-                    try c.warn(scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
+                    try t.opaque_demotes.put(t.gpa, @intFromPtr(record_decl), {});
+                    try t.warn(scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
                         container_kind_name,
                         field_name,
                     });
@@ -455,7 +455,7 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
             // initialized to zero. Some C APIs are designed with this in mind. Defaulting to zero
             // values for translated struct fields permits Zig code to comfortably use such an API.
             const default_value = if (container_kind == .@"struct")
-                try ZigTag.std_mem_zeroes.create(c.arena, field_type)
+                try ZigTag.std_mem_zeroes.create(t.arena, field_type)
             else
                 null;
 
@@ -467,20 +467,20 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
             });
         }
 
-        const record_payload = try c.arena.create(ast.Payload.Record);
+        const record_payload = try t.arena.create(ast.Payload.Record);
         record_payload.* = .{
             .base = .{ .tag = container_kind },
             .data = .{
                 .layout = .@"extern",
-                .fields = try c.arena.dupe(ast.Payload.Record.Field, fields.items),
-                .functions = try c.arena.dupe(ZigNode, functions.items),
+                .fields = try t.arena.dupe(ast.Payload.Record.Field, fields.items),
+                .functions = try t.arena.dupe(ZigNode, functions.items),
                 .variables = &.{},
             },
         };
         break :blk ZigNode.initPayload(&record_payload.base);
     };
 
-    const payload = try c.arena.create(ast.Payload.SimpleVarDecl);
+    const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
         .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(is_pub)] },
         .data = .{
@@ -490,12 +490,12 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     };
     const node = ZigNode.initPayload(&payload.base);
     if (toplevel) {
-        try c.addTopLevelDecl(name, node);
+        try t.addTopLevelDecl(name, node);
         // Only add the alias if the name is available *and* it was caught by
         // name detection. Don't bother performing a weak mangle, since a
         // mangled name is of no real use here.
-        if (!is_unnamed and !c.global_names.contains(bare_name) and c.weak_global_names.contains(bare_name))
-            try c.alias_list.append(c.gpa, .{ .alias = bare_name, .name = name });
+        if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
+            try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
     } else {
         try scope.appendNode(node);
         if (node.tag() != .pub_var_simple) {
@@ -504,27 +504,27 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     }
 }
 
-fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
-    const raw_ty = c.nodeType(fn_decl_node);
+fn transFnDecl(t: *Translator, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
+    const raw_ty = t.nodeType(fn_decl_node);
     const fn_ty = raw_ty.canonicalize(.standard);
-    const decl = c.nodeData(fn_decl_node).decl;
-    if (c.decl_table.get(@intFromPtr(fn_ty.data.func))) |_|
+    const decl = t.nodeData(fn_decl_node).decl;
+    if (t.decl_table.get(@intFromPtr(fn_ty.data.func))) |_|
         return; // Avoid processing this decl twice
 
     // TODO if this is a prototype for which a definition exists,
     // that definition should be translated instead.
-    const fn_name = c.tree.tokSlice(decl.name);
-    if (c.global_scope.sym_table.contains(fn_name))
+    const fn_name = t.tree.tokSlice(decl.name);
+    if (t.global_scope.sym_table.contains(fn_name))
         return; // Avoid processing this decl twice
 
-    const fn_decl_loc = c.nodeLoc(fn_decl_node);
+    const fn_decl_loc = t.nodeLoc(fn_decl_node);
     const has_body = decl.node != .none;
     const is_always_inline = has_body and raw_ty.getAttribute(.always_inline) != null;
     const proto_ctx = FnProtoContext{
         .fn_name = fn_name,
         .is_inline = is_always_inline,
         .is_extern = !has_body,
-        .is_export = switch (c.nodeTag(fn_decl_node)) {
+        .is_export = switch (t.nodeTag(fn_decl_node)) {
             .fn_proto, .fn_def => has_body and !is_always_inline,
 
             .inline_fn_proto, .inline_fn_def, .inline_static_fn_proto, .inline_static_fn_def, .static_fn_proto, .static_fn_def => false,
@@ -534,21 +534,21 @@ fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
         .is_pub = is_pub,
     };
 
-    const proto_node = c.transFnType(&c.global_scope.base, raw_ty, fn_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
+    const proto_node = t.transFnType(&t.global_scope.base, raw_ty, fn_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
         error.UnsupportedType => {
-            return c.failDecl(fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
+            return t.failDecl(fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
         },
         error.OutOfMemory => |e| return e,
     };
 
     if (!has_body) {
-        return c.addTopLevelDecl(fn_name, proto_node);
+        return t.addTopLevelDecl(fn_name, proto_node);
     }
     const proto_payload = proto_node.castTag(.func).?;
 
     // actual function definition with body
     const body_stmt = decl.node;
-    var block_scope = try Scope.Block.init(c, &c.global_scope.base, false);
+    var block_scope = try Scope.Block.init(t, &t.global_scope.base, false);
     block_scope.return_type = fn_ty.data.func.return_type;
     defer block_scope.deinit();
 
@@ -561,8 +561,8 @@ fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
             proto_payload.data.is_extern = true;
             proto_payload.data.is_export = false;
             proto_payload.data.is_inline = false;
-            try c.warn(&c.global_scope.base, fn_decl_loc, "function {s} parameter has no name, demoted to extern", .{fn_name});
-            return c.addTopLevelDecl(fn_name, proto_node);
+            try t.warn(&t.global_scope.base, fn_decl_loc, "function {s} parameter has no name, demoted to extern", .{fn_name});
+            return t.addTopLevelDecl(fn_name, proto_node);
         };
 
         const is_const = param_info.ty.qual.@"const";
@@ -571,19 +571,19 @@ fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
         param.name = mangled_param_name;
 
         if (!is_const) {
-            const bare_arg_name = try std.fmt.allocPrint(c.arena, "arg_{s}", .{mangled_param_name});
+            const bare_arg_name = try std.fmt.allocPrint(t.arena, "arg_{s}", .{mangled_param_name});
             const arg_name = try block_scope.makeMangledName(bare_arg_name);
             param.name = arg_name;
 
-            const redecl_node = try ZigTag.arg_redecl.create(c.arena, .{ .actual = mangled_param_name, .mangled = arg_name });
-            try block_scope.statements.append(c.gpa, redecl_node);
+            const redecl_node = try ZigTag.arg_redecl.create(t.arena, .{ .actual = mangled_param_name, .mangled = arg_name });
+            try block_scope.statements.append(t.gpa, redecl_node);
         }
         try block_scope.discardVariable(mangled_param_name);
 
         param_id += 1;
     }
 
-    c.transCompoundStmtInline(body_stmt, &block_scope) catch |err| switch (err) {
+    t.transCompoundStmtInline(body_stmt, &block_scope) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.UnsupportedTranslation,
         error.UnsupportedType,
@@ -591,82 +591,82 @@ fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
             proto_payload.data.is_extern = true;
             proto_payload.data.is_export = false;
             proto_payload.data.is_inline = false;
-            try c.warn(&c.global_scope.base, fn_decl_loc, "unable to translate function, demoted to extern", .{});
-            return c.addTopLevelDecl(fn_name, proto_node);
+            try t.warn(&t.global_scope.base, fn_decl_loc, "unable to translate function, demoted to extern", .{});
+            return t.addTopLevelDecl(fn_name, proto_node);
         },
     };
 
     proto_payload.data.body = try block_scope.complete();
-    return c.addTopLevelDecl(fn_name, proto_node);
+    return t.addTopLevelDecl(fn_name, proto_node);
 }
 
-fn transVarDecl(c: *Context, node: NodeIndex) Error!void {
-    const decl = c.nodeData(node).decl;
-    const name = c.tree.tokSlice(decl.name);
-    return c.failDecl(decl.name, name, "unable to translate variable declaration", .{});
+fn transVarDecl(t: *Translator, node: NodeIndex) Error!void {
+    const decl = t.nodeData(node).decl;
+    const name = t.tree.tokSlice(decl.name);
+    return t.failDecl(decl.name, name, "unable to translate variable declaration", .{});
 }
 
-fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_nodes: []const NodeIndex, source_loc: ?TokenIndex) Error!void {
-    if (c.decl_table.get(@intFromPtr(enum_decl))) |_|
+fn transEnumDecl(t: *Translator, scope: *Scope, enum_decl: *const Type.Enum, field_nodes: []const NodeIndex, source_loc: ?TokenIndex) Error!void {
+    if (t.decl_table.get(@intFromPtr(enum_decl))) |_|
         return; // Avoid processing this decl twice
     const toplevel = scope.id == .root;
-    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
+    const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
 
-    var bare_name = c.mapper.lookup(enum_decl.name);
+    var bare_name = t.mapper.lookup(enum_decl.name);
     const is_unnamed = bare_name[0] == '(';
     var name = bare_name;
-    if (c.unnamed_typedefs.get(@intFromPtr(enum_decl))) |typedef_name| {
+    if (t.unnamed_typedefs.get(@intFromPtr(enum_decl))) |typedef_name| {
         bare_name = typedef_name;
         name = typedef_name;
     } else {
         if (is_unnamed) {
-            bare_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{c.getMangle()});
+            bare_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{t.getMangle()});
         }
-        name = try std.fmt.allocPrint(c.arena, "enum_{s}", .{bare_name});
+        name = try std.fmt.allocPrint(t.arena, "enum_{s}", .{bare_name});
     }
     if (!toplevel) name = try bs.makeMangledName(name);
-    try c.decl_table.putNoClobber(c.gpa, @intFromPtr(enum_decl), name);
+    try t.decl_table.putNoClobber(t.gpa, @intFromPtr(enum_decl), name);
 
     const enum_type_node = if (!enum_decl.isIncomplete()) blk: {
         for (enum_decl.fields, field_nodes) |field, field_node| {
-            var enum_val_name = c.mapper.lookup(field.name);
+            var enum_val_name = t.mapper.lookup(field.name);
             if (!toplevel) {
                 enum_val_name = try bs.makeMangledName(enum_val_name);
             }
 
-            const enum_const_type_node: ?ZigNode = c.transType(scope, field.ty, .standard, field.name_tok) catch |err| switch (err) {
+            const enum_const_type_node: ?ZigNode = t.transType(scope, field.ty, .standard, field.name_tok) catch |err| switch (err) {
                 error.UnsupportedType => null,
                 else => |e| return e,
             };
 
-            const val = c.tree.value_map.get(field_node).?;
-            const enum_const_def = try ZigTag.enum_constant.create(c.arena, .{
+            const val = t.tree.value_map.get(field_node).?;
+            const enum_const_def = try ZigTag.enum_constant.create(t.arena, .{
                 .name = enum_val_name,
                 .is_public = toplevel,
                 .type = enum_const_type_node,
-                .value = try c.transCreateNodeInt(val),
+                .value = try t.transCreateNodeInt(val),
             });
             if (toplevel)
-                try c.addTopLevelDecl(enum_val_name, enum_const_def)
+                try t.addTopLevelDecl(enum_val_name, enum_const_def)
             else {
                 try scope.appendNode(enum_const_def);
                 try bs.discardVariable(enum_val_name);
             }
         }
 
-        break :blk c.transType(scope, enum_decl.tag_ty, .standard, source_loc orelse 0) catch |err| switch (err) {
+        break :blk t.transType(scope, enum_decl.tag_ty, .standard, source_loc orelse 0) catch |err| switch (err) {
             error.UnsupportedType => {
-                return c.failDecl(source_loc orelse 0, name, "unable to translate enum integer type", .{});
+                return t.failDecl(source_loc orelse 0, name, "unable to translate enum integer type", .{});
             },
             else => |e| return e,
         };
     } else blk: {
-        try c.opaque_demotes.put(c.gpa, @intFromPtr(enum_decl), {});
+        try t.opaque_demotes.put(t.gpa, @intFromPtr(enum_decl), {});
         break :blk ZigTag.opaque_literal.init();
     };
 
     const is_pub = toplevel and !is_unnamed;
-    const payload = try c.arena.create(ast.Payload.SimpleVarDecl);
+    const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
         .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(is_pub)] },
         .data = .{
@@ -676,9 +676,9 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     };
     const node = ZigNode.initPayload(&payload.base);
     if (toplevel) {
-        try c.addTopLevelDecl(name, node);
+        try t.addTopLevelDecl(name, node);
         if (!is_unnamed)
-            try c.alias_list.append(c.gpa, .{ .alias = bare_name, .name = name });
+            try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
     } else {
         try scope.appendNode(node);
         if (node.tag() != .pub_var_simple) {
@@ -687,12 +687,12 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     }
 }
 
-fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) Error!void {
-    const node_data = c.nodeData(static_assert_node).bin;
+fn transStaticAssert(t: *Translator, scope: *Scope, static_assert_node: NodeIndex) Error!void {
+    const node_data = t.nodeData(static_assert_node).bin;
 
-    const condition = c.transExpr(scope, node_data.lhs, .used) catch |err| switch (err) {
+    const condition = t.transExpr(scope, node_data.lhs, .used) catch |err| switch (err) {
         error.UnsupportedTranslation, error.UnsupportedType => {
-            return try c.warn(&c.global_scope.base, c.nodeLoc(node_data.lhs), "unable to translate _Static_assert condition", .{});
+            return try t.warn(&t.global_scope.base, t.nodeLoc(node_data.lhs), "unable to translate _Static_assert condition", .{});
         },
         error.OutOfMemory => |e| return e,
     };
@@ -700,24 +700,24 @@ fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) 
     // generate @compileError message that matches C compiler output
     const diagnostic = if (node_data.rhs != .none) str: {
         // Aro guarantees this to be a string literal.
-        const str_val = c.tree.value_map.get(node_data.rhs).?;
-        const str_ty = c.nodeType(node_data.rhs);
+        const str_val = t.tree.value_map.get(node_data.rhs).?;
+        const str_ty = t.nodeType(node_data.rhs);
 
-        const bytes = c.comp.interner.get(str_val.ref()).bytes;
-        var buf = std.ArrayList(u8).init(c.gpa);
+        const bytes = t.comp.interner.get(str_val.ref()).bytes;
+        var buf = std.ArrayList(u8).init(t.gpa);
         defer buf.deinit();
 
         try buf.appendSlice("\"static assertion failed \\");
 
         try buf.ensureUnusedCapacity(bytes.len);
-        try aro.Value.printString(bytes, str_ty, c.comp, buf.writer());
+        try aro.Value.printString(bytes, str_ty, t.comp, buf.writer());
         _ = buf.pop(); // printString adds a terminating " so we need to remove it
         try buf.appendSlice("\\\"\"");
 
-        break :str try ZigTag.string_literal.create(c.arena, try c.arena.dupe(u8, buf.items));
-    } else try ZigTag.string_literal.create(c.arena, "\"static assertion failed\"");
+        break :str try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+    } else try ZigTag.string_literal.create(t.arena, "\"static assertion failed\"");
 
-    const assert_node = try ZigTag.static_assert.create(c.arena, .{ .lhs = condition, .rhs = diagnostic });
+    const assert_node = try ZigTag.static_assert.create(t.arena, .{ .lhs = condition, .rhs = diagnostic });
     try scope.appendNode(assert_node);
 }
 
@@ -725,51 +725,51 @@ fn transStaticAssert(c: *Context, scope: *Scope, static_assert_node: NodeIndex) 
 // Type translation
 // ================
 
-fn getTypeStr(c: *Context, ty: Type) ![]const u8 {
+fn getTypeStr(t: *Translator, ty: Type) ![]const u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(c.gpa);
-    const w = buf.writer(c.gpa);
-    try ty.print(c.mapper, c.comp.langopts, w);
-    return c.arena.dupe(u8, buf.items);
+    defer buf.deinit(t.gpa);
+    const w = buf.writer(t.gpa);
+    try ty.print(t.mapper, t.comp.langopts, w);
+    return t.arena.dupe(u8, buf.items);
 }
 
-fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualHandling, source_loc: TokenIndex) TypeError!ZigNode {
+fn transType(t: *Translator, scope: *Scope, raw_ty: Type, qual_handling: Type.QualHandling, source_loc: TokenIndex) TypeError!ZigNode {
     const ty = raw_ty.canonicalize(qual_handling);
     if (ty.qual.atomic) {
-        const type_name = try c.getTypeStr(ty);
-        return c.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{type_name});
+        const type_name = try t.getTypeStr(ty);
+        return t.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{type_name});
     }
 
     switch (ty.specifier) {
-        .void => return ZigTag.type.create(c.arena, "anyopaque"),
-        .bool => return ZigTag.type.create(c.arena, "bool"),
-        .char => return ZigTag.type.create(c.arena, "c_char"),
-        .schar => return ZigTag.type.create(c.arena, "i8"),
-        .uchar => return ZigTag.type.create(c.arena, "u8"),
-        .short => return ZigTag.type.create(c.arena, "c_short"),
-        .ushort => return ZigTag.type.create(c.arena, "c_ushort"),
-        .int => return ZigTag.type.create(c.arena, "c_int"),
-        .uint => return ZigTag.type.create(c.arena, "c_uint"),
-        .long => return ZigTag.type.create(c.arena, "c_long"),
-        .ulong => return ZigTag.type.create(c.arena, "c_ulong"),
-        .long_long => return ZigTag.type.create(c.arena, "c_longlong"),
-        .ulong_long => return ZigTag.type.create(c.arena, "c_ulonglong"),
-        .int128 => return ZigTag.type.create(c.arena, "i128"),
-        .uint128 => return ZigTag.type.create(c.arena, "u128"),
-        .fp16, .float16 => return ZigTag.type.create(c.arena, "f16"),
-        .float => return ZigTag.type.create(c.arena, "f32"),
-        .double => return ZigTag.type.create(c.arena, "f64"),
-        .long_double => return ZigTag.type.create(c.arena, "c_longdouble"),
-        .float128 => return ZigTag.type.create(c.arena, "f128"),
+        .void => return ZigTag.type.create(t.arena, "anyopaque"),
+        .bool => return ZigTag.type.create(t.arena, "bool"),
+        .char => return ZigTag.type.create(t.arena, "c_char"),
+        .schar => return ZigTag.type.create(t.arena, "i8"),
+        .uchar => return ZigTag.type.create(t.arena, "u8"),
+        .short => return ZigTag.type.create(t.arena, "c_short"),
+        .ushort => return ZigTag.type.create(t.arena, "c_ushort"),
+        .int => return ZigTag.type.create(t.arena, "c_int"),
+        .uint => return ZigTag.type.create(t.arena, "c_uint"),
+        .long => return ZigTag.type.create(t.arena, "c_long"),
+        .ulong => return ZigTag.type.create(t.arena, "c_ulong"),
+        .long_long => return ZigTag.type.create(t.arena, "c_longlong"),
+        .ulong_long => return ZigTag.type.create(t.arena, "c_ulonglong"),
+        .int128 => return ZigTag.type.create(t.arena, "i128"),
+        .uint128 => return ZigTag.type.create(t.arena, "u128"),
+        .fp16, .float16 => return ZigTag.type.create(t.arena, "f16"),
+        .float => return ZigTag.type.create(t.arena, "f32"),
+        .double => return ZigTag.type.create(t.arena, "f64"),
+        .long_double => return ZigTag.type.create(t.arena, "c_longdouble"),
+        .float128 => return ZigTag.type.create(t.arena, "f128"),
         .@"enum" => {
             const enum_decl = ty.data.@"enum";
             var trans_scope = scope;
             if (enum_decl.name != .empty) {
-                const decl_name = c.mapper.lookup(enum_decl.name);
-                if (c.weak_global_names.contains(decl_name)) trans_scope = &c.global_scope.base;
+                const decl_name = t.mapper.lookup(enum_decl.name);
+                if (t.weak_global_names.contains(decl_name)) trans_scope = &t.global_scope.base;
             }
-            try c.transEnumDecl(trans_scope, enum_decl, &.{}, source_loc);
-            return ZigTag.identifier.create(c.arena, c.decl_table.get(@intFromPtr(enum_decl)).?);
+            try t.transEnumDecl(trans_scope, enum_decl, &.{}, source_loc);
+            return ZigTag.identifier.create(t.arena, t.decl_table.get(@intFromPtr(enum_decl)).?);
         },
         .pointer => {
             const child_type = ty.elemType();
@@ -777,53 +777,53 @@ fn transType(c: *Context, scope: *Scope, raw_ty: Type, qual_handling: Type.QualH
             const is_fn_proto = child_type.isFunc();
             const is_const = is_fn_proto or child_type.isConst();
             const is_volatile = child_type.qual.@"volatile";
-            const elem_type = try c.transType(scope, child_type, qual_handling, source_loc);
+            const elem_type = try t.transType(scope, child_type, qual_handling, source_loc);
             const ptr_info: @FieldType(ast.Payload.Pointer, "data") = .{
                 .is_const = is_const,
                 .is_volatile = is_volatile,
                 .elem_type = elem_type,
             };
             if (is_fn_proto or
-                c.typeIsOpaque(child_type) or
-                c.typeWasDemotedToOpaque(child_type))
+                t.typeIsOpaque(child_type) or
+                t.typeWasDemotedToOpaque(child_type))
             {
-                const ptr = try ZigTag.single_pointer.create(c.arena, ptr_info);
-                return ZigTag.optional_type.create(c.arena, ptr);
+                const ptr = try ZigTag.single_pointer.create(t.arena, ptr_info);
+                return ZigTag.optional_type.create(t.arena, ptr);
             }
 
-            return ZigTag.c_pointer.create(c.arena, ptr_info);
+            return ZigTag.c_pointer.create(t.arena, ptr_info);
         },
         .unspecified_variable_len_array, .incomplete_array => {
             const child_type = ty.elemType();
             const is_const = child_type.qual.@"const";
             const is_volatile = child_type.qual.@"volatile";
-            const elem_type = try c.transType(scope, child_type, qual_handling, source_loc);
+            const elem_type = try t.transType(scope, child_type, qual_handling, source_loc);
 
-            return ZigTag.c_pointer.create(c.arena, .{ .is_const = is_const, .is_volatile = is_volatile, .elem_type = elem_type });
+            return ZigTag.c_pointer.create(t.arena, .{ .is_const = is_const, .is_volatile = is_volatile, .elem_type = elem_type });
         },
         .array,
         .static_array,
         => {
             const size = ty.arrayLen().?;
-            const elem_type = try c.transType(scope, ty.elemType(), qual_handling, source_loc);
-            return ZigTag.array_type.create(c.arena, .{ .len = size, .elem_type = elem_type });
+            const elem_type = try t.transType(scope, ty.elemType(), qual_handling, source_loc);
+            return ZigTag.array_type.create(t.arena, .{ .len = size, .elem_type = elem_type });
         },
         .func,
         .var_args_func,
         .old_style_func,
-        => return c.transFnType(scope, ty, ty, source_loc, .{}),
+        => return t.transFnType(scope, ty, ty, source_loc, .{}),
         .@"struct",
         .@"union",
         => {
             var trans_scope = scope;
-            if (ty.isAnonymousRecord(c.comp)) {
+            if (ty.isAnonymousRecord(t.comp)) {
                 const record_decl = ty.data.record;
-                const name_id = c.mapper.lookup(record_decl.name);
-                if (c.weak_global_names.contains(name_id)) trans_scope = &c.global_scope.base;
+                const name_id = t.mapper.lookup(record_decl.name);
+                if (t.weak_global_names.contains(name_id)) trans_scope = &t.global_scope.base;
             }
-            try c.transRecordDecl(trans_scope, ty);
-            const name = c.decl_table.get(@intFromPtr(ty.data.record)).?;
-            return ZigTag.identifier.create(c.arena, name);
+            try t.transRecordDecl(trans_scope, ty);
+            const name = t.decl_table.get(@intFromPtr(ty.data.record)).?;
+            return ZigTag.identifier.create(t.arena, name);
         },
         .attributed,
         .typeof_type,
@@ -965,7 +965,7 @@ const FnProtoContext = struct {
 };
 
 fn transFnType(
-    c: *Context,
+    t: *Translator,
     scope: *Scope,
     raw_ty: Type,
     fn_ty: Type,
@@ -973,7 +973,7 @@ fn transFnType(
     ctx: FnProtoContext,
 ) !ZigNode {
     const param_count: usize = fn_ty.data.func.params.len;
-    const fn_params = try c.arena.alloc(ast.Payload.Param, param_count);
+    const fn_params = try t.arena.alloc(ast.Payload.Param, param_count);
 
     for (fn_ty.data.func.params, fn_params) |param_info, *param_node| {
         const param_ty = param_info.ty;
@@ -982,9 +982,9 @@ fn transFnType(
         const param_name: ?[]const u8 = if (param_info.name == .empty)
             null
         else
-            c.mapper.lookup(param_info.name);
+            t.mapper.lookup(param_info.name);
 
-        const type_node = try c.transType(scope, param_ty, .standard, param_info.name_tok);
+        const type_node = try t.transType(scope, param_ty, .standard, param_info.name_tok);
         param_node.* = .{
             .is_noalias = is_noalias,
             .name = param_name,
@@ -994,12 +994,12 @@ fn transFnType(
 
     const linksection_string = blk: {
         if (raw_ty.getAttribute(.section)) |section| {
-            break :blk c.comp.interner.get(section.name.ref()).bytes;
+            break :blk t.comp.interner.get(section.name.ref()).bytes;
         }
         break :blk null;
     };
 
-    const alignment: ?c_uint = raw_ty.requestedAlignment(c.comp) orelse null;
+    const alignment: ?c_uint = raw_ty.requestedAlignment(t.comp) orelse null;
 
     const explicit_callconv = null;
     // const explicit_callconv = if ((ctx.is_inline or ctx.is_export or ctx.is_extern) and ctx.cc == .C) null else ctx.cc;
@@ -1013,9 +1013,9 @@ fn transFnType(
                 // convert primitive anyopaque to actual void (only for return type)
                 break :blk ZigTag.void_type.init();
             } else {
-                break :blk c.transType(scope, return_ty, .standard, source_loc) catch |err| switch (err) {
+                break :blk t.transType(scope, return_ty, .standard, source_loc) catch |err| switch (err) {
                     error.UnsupportedType => {
-                        try c.warn(scope, source_loc, "unsupported function proto return type", .{});
+                        try t.warn(scope, source_loc, "unsupported function proto return type", .{});
                         return err;
                     },
                     error.OutOfMemory => |e| return e,
@@ -1024,7 +1024,7 @@ fn transFnType(
         }
     };
 
-    const payload = try c.arena.create(ast.Payload.Func);
+    const payload = try t.arena.create(ast.Payload.Func);
     payload.* = .{
         .base = .{ .tag = .func },
         .data = .{
@@ -1062,49 +1062,49 @@ fn recordHasBitfield(record: *const Type.Record) bool {
     return false;
 }
 
-fn typeIsOpaque(c: *Context, ty: Type) bool {
+fn typeIsOpaque(t: *Translator, ty: Type) bool {
     return switch (ty.specifier) {
         .void => true,
         .@"struct", .@"union" => recordHasBitfield(ty.getRecord().?),
-        .typeof_type => c.typeIsOpaque(ty.data.sub_type.*),
-        .typeof_expr => c.typeIsOpaque(ty.data.expr.ty),
-        .attributed => c.typeIsOpaque(ty.data.attributed.base),
+        .typeof_type => t.typeIsOpaque(ty.data.sub_type.*),
+        .typeof_expr => t.typeIsOpaque(ty.data.expr.ty),
+        .attributed => t.typeIsOpaque(ty.data.attributed.base),
         else => false,
     };
 }
 
-fn typeWasDemotedToOpaque(c: *Context, ty: Type) bool {
+fn typeWasDemotedToOpaque(t: *Translator, ty: Type) bool {
     switch (ty.specifier) {
         .@"struct", .@"union" => {
             const record = ty.getRecord().?;
-            if (c.opaque_demotes.contains(@intFromPtr(record))) return true;
+            if (t.opaque_demotes.contains(@intFromPtr(record))) return true;
             for (record.fields) |field| {
-                if (c.typeWasDemotedToOpaque(field.ty)) return true;
+                if (t.typeWasDemotedToOpaque(field.ty)) return true;
             }
             return false;
         },
 
-        .@"enum" => return c.opaque_demotes.contains(@intFromPtr(ty.data.@"enum")),
+        .@"enum" => return t.opaque_demotes.contains(@intFromPtr(ty.data.@"enum")),
 
-        .typeof_type => return c.typeWasDemotedToOpaque(ty.data.sub_type.*),
-        .typeof_expr => return c.typeWasDemotedToOpaque(ty.data.expr.ty),
-        .attributed => return c.typeWasDemotedToOpaque(ty.data.attributed.base),
+        .typeof_type => return t.typeWasDemotedToOpaque(ty.data.sub_type.*),
+        .typeof_expr => return t.typeWasDemotedToOpaque(ty.data.expr.ty),
+        .attributed => return t.typeWasDemotedToOpaque(ty.data.attributed.base),
         else => return false,
     }
 }
 
 /// Check if an expression is ultimately a reference to a function declaration
 /// (which means it should not be unwrapped with `.?` in translated code)
-fn isFunctionDeclRef(c: *Context, base_node: NodeIndex) bool {
-    const node_tags = c.tree.nodes.items(.tag);
-    const node_data = c.tree.nodes.items(.data);
+fn isFunctionDeclRef(t: *Translator, base_node: NodeIndex) bool {
+    const node_tags = t.tree.nodes.items(.tag);
+    const node_data = t.tree.nodes.items(.data);
     var node = base_node;
     while (true) switch (node_tags[@intFromEnum(node)]) {
         .paren_expr => {
             node = node_data[@intFromEnum(node)].un;
         },
         .decl_ref_expr => {
-            const res_ty = c.nodeType(node);
+            const res_ty = t.nodeType(node);
             return res_ty.isFunc();
         },
         .implicit_cast => {
@@ -1119,15 +1119,15 @@ fn isFunctionDeclRef(c: *Context, base_node: NodeIndex) bool {
             node = node_data[@intFromEnum(node)].un;
         },
         .generic_expr, .generic_expr_one => {
-            const child_nodes = c.tree.childNodes(node);
+            const child_nodes = t.tree.childNodes(node);
             const chosen = child_nodes[1];
             node = chosen;
         },
         else => return false,
     };
 }
-fn typeHasWrappingOverflow(c: *Context, ty: Type) bool {
-    if (ty.isUnsignedInt(c.comp)) {
+fn typeHasWrappingOverflow(t: *Translator, ty: Type) bool {
+    if (ty.isUnsignedInt(t.comp)) {
         // unsigned integer overflow wraps around.
         return true;
     } else {
@@ -1140,112 +1140,112 @@ fn typeHasWrappingOverflow(c: *Context, ty: Type) bool {
 // Statement translation
 // =====================
 
-fn transStmt(c: *Context, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
-    switch (c.nodeTag(stmt)) {
+fn transStmt(t: *Translator, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
+    switch (t.nodeTag(stmt)) {
         .compound_stmt, .compound_stmt_two => {
-            return c.transCompoundStmt(scope, stmt);
+            return t.transCompoundStmt(scope, stmt);
         },
         .static_assert => {
-            try c.transStaticAssert(scope, stmt);
+            try t.transStaticAssert(scope, stmt);
             return ZigTag.declaration.init();
         },
-        .return_stmt => return c.transReturnStmt(scope, stmt),
+        .return_stmt => return t.transReturnStmt(scope, stmt),
         .null_stmt => return ZigTag.empty_block.init(),
-        else => |tag| return c.fail(error.UnsupportedTranslation, c.nodeLoc(stmt), "TODO implement translation of stmt {s}", .{@tagName(tag)}),
+        else => |tag| return t.fail(error.UnsupportedTranslation, t.nodeLoc(stmt), "TODO implement translation of stmt {s}", .{@tagName(tag)}),
     }
 }
 
-fn transCompoundStmtInline(c: *Context, compound: NodeIndex, block: *Scope.Block) TransError!void {
-    const stmts = c.tree.childNodes(compound);
+fn transCompoundStmtInline(t: *Translator, compound: NodeIndex, block: *Scope.Block) TransError!void {
+    const stmts = t.tree.childNodes(compound);
     for (stmts) |stmt| {
-        const result = try c.transStmt(&block.base, stmt);
+        const result = try t.transStmt(&block.base, stmt);
         switch (result.tag()) {
             .declaration, .empty_block => {},
-            else => try block.statements.append(c.gpa, result),
+            else => try block.statements.append(t.gpa, result),
         }
     }
 }
 
-fn transCompoundStmt(c: *Context, scope: *Scope, compound: NodeIndex) TransError!ZigNode {
-    var block_scope = try Scope.Block.init(c, scope, false);
+fn transCompoundStmt(t: *Translator, scope: *Scope, compound: NodeIndex) TransError!ZigNode {
+    var block_scope = try Scope.Block.init(t, scope, false);
     defer block_scope.deinit();
-    try c.transCompoundStmtInline(compound, &block_scope);
+    try t.transCompoundStmtInline(compound, &block_scope);
     return try block_scope.complete();
 }
 
-fn transReturnStmt(c: *Context, scope: *Scope, return_stmt: NodeIndex) TransError!ZigNode {
-    const operand = c.nodeData(return_stmt).un;
+fn transReturnStmt(t: *Translator, scope: *Scope, return_stmt: NodeIndex) TransError!ZigNode {
+    const operand = t.nodeData(return_stmt).un;
     if (operand == .none) return ZigTag.return_void.init();
 
-    var rhs = try c.transExprCoercing(scope, operand);
+    var rhs = try t.transExprCoercing(scope, operand);
     const return_ty = scope.findBlockReturnType();
     if (rhs.isBoolRes() and !return_ty.is(.bool)) {
-        rhs = try ZigTag.int_from_bool.create(c.arena, rhs);
+        rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
     }
-    return ZigTag.@"return".create(c.arena, rhs);
+    return ZigTag.@"return".create(t.arena, rhs);
 }
 
 // ======================
 // Expression translation
 // ======================
 
-fn transExpr(c: *Context, scope: *Scope, expr: NodeIndex, used: ResultUsed) TransError!ZigNode {
+fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) TransError!ZigNode {
     std.debug.assert(expr != .none);
-    const ty = c.nodeType(expr);
-    if (c.tree.value_map.get(expr)) |val| {
+    const ty = t.nodeType(expr);
+    if (t.tree.value_map.get(expr)) |val| {
         // TODO handle other values
-        const int = try c.transCreateNodeInt(val);
-        const as_node = try ZigTag.as.create(c.arena, .{
-            .lhs = try c.transType(undefined, ty, .standard, undefined),
+        const int = try t.transCreateNodeInt(val);
+        const as_node = try ZigTag.as.create(t.arena, .{
+            .lhs = try t.transType(undefined, ty, .standard, undefined),
             .rhs = int,
         });
-        return c.maybeSuppressResult(used, as_node);
+        return t.maybeSuppressResult(used, as_node);
     }
-    switch (c.nodeTag(expr)) {
-        .explicit_cast, .implicit_cast => return c.transCastExpr(scope, expr, used),
-        .decl_ref_expr => return c.transDeclRefExpr(scope, expr),
+    switch (t.nodeTag(expr)) {
+        .explicit_cast, .implicit_cast => return t.transCastExpr(scope, expr, used),
+        .decl_ref_expr => return t.transDeclRefExpr(scope, expr),
         .addr_of_expr => {
-            const operand = c.nodeData(expr).un;
-            const res = try ZigTag.address_of.create(c.arena, try c.transExpr(scope, operand, .used));
-            return c.maybeSuppressResult(used, res);
+            const operand = t.nodeData(expr).un;
+            const res = try ZigTag.address_of.create(t.arena, try t.transExpr(scope, operand, .used));
+            return t.maybeSuppressResult(used, res);
         },
         .deref_expr => {
-            if (c.typeWasDemotedToOpaque(ty))
-                return fail(c, error.UnsupportedTranslation, c.nodeLoc(expr), "cannot dereference opaque type", .{});
+            if (t.typeWasDemotedToOpaque(ty))
+                return fail(t, error.UnsupportedTranslation, t.nodeLoc(expr), "cannot dereference opaque type", .{});
 
-            const operand = c.nodeData(expr).un;
+            const operand = t.nodeData(expr).un;
             // Dereferencing a function pointer is a no-op.
-            if (ty.isFunc()) return try c.transExpr(scope, operand, used);
+            if (ty.isFunc()) return try t.transExpr(scope, operand, used);
 
-            const res = try ZigTag.deref.create(c.arena, try c.transExpr(scope, operand, .used));
-            return c.maybeSuppressResult(used, res);
+            const res = try ZigTag.deref.create(t.arena, try t.transExpr(scope, operand, .used));
+            return t.maybeSuppressResult(used, res);
         },
         .bool_not_expr => {
-            const operand = c.nodeData(expr).un;
-            const res = try ZigTag.not.create(c.arena, try c.transBoolExpr(scope, operand, .used));
-            return c.maybeSuppressResult(used, res);
+            const operand = t.nodeData(expr).un;
+            const res = try ZigTag.not.create(t.arena, try t.transBoolExpr(scope, operand, .used));
+            return t.maybeSuppressResult(used, res);
         },
         .bit_not_expr => {
-            const operand = c.nodeData(expr).un;
-            const res = try ZigTag.bit_not.create(c.arena, try c.transExpr(scope, operand, .used));
-            return c.maybeSuppressResult(used, res);
+            const operand = t.nodeData(expr).un;
+            const res = try ZigTag.bit_not.create(t.arena, try t.transExpr(scope, operand, .used));
+            return t.maybeSuppressResult(used, res);
         },
         .negate_expr => {
-            const operand = c.nodeData(expr).un;
-            const operand_ty = c.nodeType(expr);
-            if (!c.typeHasWrappingOverflow(operand_ty)) {
-                const sub_expr_node = try c.transExpr(scope, operand, .used);
+            const operand = t.nodeData(expr).un;
+            const operand_ty = t.nodeType(expr);
+            if (!t.typeHasWrappingOverflow(operand_ty)) {
+                const sub_expr_node = try t.transExpr(scope, operand, .used);
                 const to_negate = if (sub_expr_node.isBoolRes()) blk: {
-                    const ty_node = try ZigTag.type.create(c.arena, "c_int");
-                    const int_node = try ZigTag.int_from_bool.create(c.arena, sub_expr_node);
-                    break :blk try ZigTag.as.create(c.arena, .{ .lhs = ty_node, .rhs = int_node });
+                    const ty_node = try ZigTag.type.create(t.arena, "c_int");
+                    const int_node = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+                    break :blk try ZigTag.as.create(t.arena, .{ .lhs = ty_node, .rhs = int_node });
                 } else sub_expr_node;
 
-                return ZigTag.negate.create(c.arena, to_negate);
-            } else if (operand_ty.isUnsignedInt(c.comp)) {
+                return ZigTag.negate.create(t.arena, to_negate);
+            } else if (operand_ty.isUnsignedInt(t.comp)) {
                 // use -% x for unsigned integers
-                return ZigTag.negate_wrap.create(c.arena, try c.transExpr(scope, operand, .used));
-            } else return fail(c, error.UnsupportedTranslation, c.nodeLoc(expr), "C negation with non float non integer", .{});
+                return ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, operand, .used));
+            } else return fail(t, error.UnsupportedTranslation, t.nodeLoc(expr), "C negation with non float non integer", .{});
         },
         else => unreachable, // Not an expression.
     }
@@ -1253,74 +1253,74 @@ fn transExpr(c: *Context, scope: *Scope, expr: NodeIndex, used: ResultUsed) Tran
 
 /// Same as `transExpr` but with the knowledge that the operand will be type coerced, and therefore
 /// an `@as` would be redundant. This is used to prevent redundant `@as` in integer literals.
-fn transExprCoercing(c: *Context, scope: *Scope, expr: NodeIndex) TransError!ZigNode {
+fn transExprCoercing(t: *Translator, scope: *Scope, expr: NodeIndex) TransError!ZigNode {
     // TODO bypass casts
-    return c.transExpr(scope, expr, .used);
+    return t.transExpr(scope, expr, .used);
 }
 
-fn transBoolExpr(c: *Context, scope: *Scope, expr: NodeIndex, used: ResultUsed) TransError!ZigNode {
-    const expr_tag = c.nodeTag(expr);
+fn transBoolExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) TransError!ZigNode {
+    const expr_tag = t.nodeTag(expr);
     if (expr_tag == .int_literal) {
-        const int_val = c.tree.value_map.get(expr).?;
-        return if (int_val.isZero(c.comp))
+        const int_val = t.tree.value_map.get(expr).?;
+        return if (int_val.isZero(t.comp))
             ZigTag.false_literal.init()
         else
             ZigTag.true_literal.init();
     }
     if (expr_tag == .implicit_cast) {
-        const cast = c.nodeData(expr).cast;
+        const cast = t.nodeData(expr).cast;
         if (cast.kind == .bool_to_int) {
-            const bool_res = try c.transExpr(scope, cast.operand, .used);
-            return c.maybeSuppressResult(used, bool_res);
+            const bool_res = try t.transExpr(scope, cast.operand, .used);
+            return t.maybeSuppressResult(used, bool_res);
         }
     }
 
-    const maybe_bool_res = try c.transExpr(scope, expr, .used);
+    const maybe_bool_res = try t.transExpr(scope, expr, .used);
     if (maybe_bool_res.isBoolRes()) {
-        return c.maybeSuppressResult(used, maybe_bool_res);
+        return t.maybeSuppressResult(used, maybe_bool_res);
     }
 
-    const ty = c.nodeType(expr);
-    const res = try c.finishBoolExpr(ty, maybe_bool_res);
-    return c.maybeSuppressResult(used, res);
+    const ty = t.nodeType(expr);
+    const res = try t.finishBoolExpr(ty, maybe_bool_res);
+    return t.maybeSuppressResult(used, res);
 }
 
-fn finishBoolExpr(c: *Context, ty: Type, node: ZigNode) TransError!ZigNode {
+fn finishBoolExpr(t: *Translator, ty: Type, node: ZigNode) TransError!ZigNode {
     if (ty.is(.nullptr_t)) {
         // node == null, always true
-        return ZigTag.equal.create(c.arena, .{ .lhs = node, .rhs = ZigTag.null_literal.init() });
+        return ZigTag.equal.create(t.arena, .{ .lhs = node, .rhs = ZigTag.null_literal.init() });
     }
     if (ty.isPtr()) {
         if (node.tag() == .string_literal) {
             // @intFromPtr(node) != 0, always true
-            const int_from_ptr = try ZigTag.int_from_ptr.create(c.arena, node);
-            return ZigTag.not_equal.create(c.arena, .{ .lhs = int_from_ptr, .rhs = ZigTag.zero_literal.init() });
+            const int_from_ptr = try ZigTag.int_from_ptr.create(t.arena, node);
+            return ZigTag.not_equal.create(t.arena, .{ .lhs = int_from_ptr, .rhs = ZigTag.zero_literal.init() });
         }
         // node != null
-        return ZigTag.not_equal.create(c.arena, .{ .lhs = node, .rhs = ZigTag.null_literal.init() });
+        return ZigTag.not_equal.create(t.arena, .{ .lhs = node, .rhs = ZigTag.null_literal.init() });
     }
     if (ty.isScalar()) {
         // node != 0
-        return ZigTag.not_equal.create(c.arena, .{ .lhs = node, .rhs = ZigTag.zero_literal.init() });
+        return ZigTag.not_equal.create(t.arena, .{ .lhs = node, .rhs = ZigTag.zero_literal.init() });
     }
     unreachable; // Unexpected bool expression type
 }
 
-fn transCastExpr(c: *Context, scope: *Scope, cast_node: NodeIndex, used: ResultUsed) TransError!ZigNode {
-    const cast = c.nodeData(cast_node).cast;
+fn transCastExpr(t: *Translator, scope: *Scope, cast_node: NodeIndex, used: ResultUsed) TransError!ZigNode {
+    const cast = t.nodeData(cast_node).cast;
     switch (cast.kind) {
         .lval_to_rval, .no_op, .function_to_pointer => {
-            const sub_expr_node = try c.transExpr(scope, cast.operand, .used);
-            return c.maybeSuppressResult(used, sub_expr_node);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            return t.maybeSuppressResult(used, sub_expr_node);
         },
-        else => return c.fail(error.UnsupportedTranslation, c.nodeLoc(cast_node), "TODO translate {s} cast", .{@tagName(cast.kind)}),
+        else => return t.fail(error.UnsupportedTranslation, t.nodeLoc(cast_node), "TODO translate {s} cast", .{@tagName(cast.kind)}),
     }
 }
 
-fn transDeclRefExpr(c: *Context, scope: *Scope, decl_ref_node: NodeIndex) TransError!ZigNode {
-    const decl_ref = c.nodeData(decl_ref_node).decl_ref;
+fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref_node: NodeIndex) TransError!ZigNode {
+    const decl_ref = t.nodeData(decl_ref_node).decl_ref;
 
-    const name = c.tree.tokSlice(decl_ref);
+    const name = t.tree.tokSlice(decl_ref);
     const mangled_name = scope.getAlias(name);
     // TODO
     // const decl_is_var = @as(*const clang.Decl, @ptrCast(value_decl)).getKind() == .Var;
@@ -1330,29 +1330,29 @@ fn transDeclRefExpr(c: *Context, scope: *Scope, decl_ref_node: NodeIndex) TransE
 
     var confirmed_local_extern = false;
     var ref_expr = val: {
-        if (c.isFunctionDeclRef(decl_ref_node)) {
-            break :val try ZigTag.fn_identifier.create(c.arena, mangled_name);
+        if (t.isFunctionDeclRef(decl_ref_node)) {
+            break :val try ZigTag.fn_identifier.create(t.arena, mangled_name);
         } else if (potential_local_extern) {
             if (scope.getLocalExternAlias(name)) |v| {
                 confirmed_local_extern = true;
-                break :val try ZigTag.identifier.create(c.arena, v);
+                break :val try ZigTag.identifier.create(t.arena, v);
             } else {
-                break :val try ZigTag.identifier.create(c.arena, mangled_name);
+                break :val try ZigTag.identifier.create(t.arena, mangled_name);
             }
         } else {
-            break :val try ZigTag.identifier.create(c.arena, mangled_name);
+            break :val try ZigTag.identifier.create(t.arena, mangled_name);
         }
     };
 
     if (decl_is_var) {
         // const var_decl: NodeIndex = .none; // TODO
         if (false) { //var_decl.isStaticLocal()) {
-            ref_expr = try ZigTag.field_access.create(c.arena, .{
+            ref_expr = try ZigTag.field_access.create(t.arena, .{
                 .lhs = ref_expr,
                 .field_name = Scope.Block.static_inner_name,
             });
         } else if (confirmed_local_extern) {
-            ref_expr = try ZigTag.field_access.create(c.arena, .{
+            ref_expr = try ZigTag.field_access.create(t.arena, .{
                 .lhs = ref_expr,
                 .field_name = name, // by necessity, name will always == mangled_name
             });
@@ -1366,17 +1366,17 @@ fn transDeclRefExpr(c: *Context, scope: *Scope, decl_ref_node: NodeIndex) TransE
 // Node creation helpers
 // =====================
 
-fn transCreateNodeInt(c: *Context, int: aro.Value) !ZigNode {
+fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     var space: aro.Interner.Tag.Int.BigIntSpace = undefined;
-    var big = c.comp.interner.get(int.ref()).toBigInt(&space);
+    var big = t.comp.interner.get(int.ref()).toBigInt(&space);
     const is_negative = !big.positive;
     big.positive = true;
 
-    const str = big.toStringAlloc(c.arena, 10, .lower) catch |err| switch (err) {
+    const str = big.toStringAlloc(t.arena, 10, .lower) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
     };
-    const res = try ZigTag.integer_literal.create(c.arena, str);
-    if (is_negative) return ZigTag.negate.create(c.arena, res);
+    const res = try ZigTag.integer_literal.create(t.arena, str);
+    if (is_negative) return ZigTag.negate.create(t.arena, res);
     return res;
 }
 
