@@ -4,7 +4,6 @@ enum {
 };
 
 // translate
-// expect=fail
 // target=native-linux
 //
 // pub const One: c_int = 0;

@@ -376,8 +376,8 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     const container_kind: ZigTag = if (record_ty.is(.@"union")) .@"union" else .@"struct";
     const container_kind_name = @tagName(container_kind);
 
-    var is_unnamed = false;
     var bare_name = c.mapper.lookup(record_decl.name);
+    const is_unnamed = bare_name[0] == '(';
     var name = bare_name;
 
     if (c.unnamed_typedefs.get(@intFromPtr(record_decl))) |typedef_name| {
@@ -386,7 +386,6 @@ fn transRecordDecl(c: *Context, scope: *Scope, record_ty: Type) Error!void {
     } else {
         if (record_ty.isAnonymousRecord(c.comp)) {
             bare_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{c.getMangle()});
-            is_unnamed = true;
         }
         name = try std.fmt.allocPrint(c.arena, "{s}_{s}", .{ container_kind_name, bare_name });
         if (toplevel and !is_unnamed) {
@@ -512,6 +511,8 @@ fn transFnDecl(c: *Context, fn_decl_node: NodeIndex, is_pub: bool) Error!void {
     if (c.decl_table.get(@intFromPtr(fn_ty.data.func))) |_|
         return; // Avoid processing this decl twice
 
+    // TODO if this is a prototype for which a definition exists,
+    // that definition should be translated instead.
     const fn_name = c.tree.tokSlice(decl.name);
     if (c.global_scope.sym_table.contains(fn_name))
         return; // Avoid processing this decl twice
@@ -611,16 +612,15 @@ fn transEnumDecl(c: *Context, scope: *Scope, enum_decl: *const Type.Enum, field_
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(c) else undefined;
 
-    var is_unnamed = false;
     var bare_name = c.mapper.lookup(enum_decl.name);
+    const is_unnamed = bare_name[0] == '(';
     var name = bare_name;
     if (c.unnamed_typedefs.get(@intFromPtr(enum_decl))) |typedef_name| {
         bare_name = typedef_name;
         name = typedef_name;
     } else {
-        if (bare_name.len == 0) {
+        if (is_unnamed) {
             bare_name = try std.fmt.allocPrint(c.arena, "unnamed_{d}", .{c.getMangle()});
-            is_unnamed = true;
         }
         name = try std.fmt.allocPrint(c.arena, "enum_{s}", .{bare_name});
     }
