@@ -20,6 +20,7 @@ pub const Node = extern union {
         return_void,
         zero_literal,
         one_literal,
+        @"unreachable",
         void_type,
         noreturn_type,
         @"anytype",
@@ -114,8 +115,6 @@ pub const Node = extern union {
         ellipsis3,
         assign,
 
-        /// @import("std").zig.c_builtins.<name>
-        import_c_builtin,
         /// @intCast(operand)
         int_cast,
         /// @constCast(operand)
@@ -160,6 +159,37 @@ pub const Node = extern union {
         shuffle,
         /// @extern(ty, .{ .name = n })
         builtin_extern,
+
+        /// @byteSwap(operand)
+        byte_swap,
+        /// @ceil(operand)
+        ceil,
+        /// @cos(operand)
+        cos,
+        /// @sin(operand)
+        sin,
+        /// @exp(operand)
+        exp,
+        /// @exp2(operand)
+        exp2,
+        /// @exp10(operand)
+        exp10,
+        /// @abs(operand)
+        abs,
+        /// @log(operand)
+        log,
+        /// @log2(operand)
+        log2,
+        /// @log10(operand)
+        log10,
+        /// @round(operand)
+        round,
+        /// @sqrt(operand)
+        sqrt,
+        /// @trunc(operand)
+        trunc,
+        /// @floor(operand)
+        floor,
 
         /// @import("std").zig.c_translation.MacroArithmetic.<op>(lhs, rhs)
         macro_arithmetic,
@@ -250,6 +280,7 @@ pub const Node = extern union {
                 .@"anytype",
                 .@"continue",
                 .@"break",
+                .@"unreachable",
                 => @compileError("Type Tag " ++ @tagName(t) ++ " has no payload"),
 
                 .std_mem_zeroes,
@@ -289,6 +320,21 @@ pub const Node = extern union {
                 .const_cast,
                 .volatile_cast,
                 .vector_zero_init,
+                .byte_swap,
+                .ceil,
+                .cos,
+                .sin,
+                .exp,
+                .exp2,
+                .exp10,
+                .abs,
+                .log,
+                .log2,
+                .log10,
+                .round,
+                .sqrt,
+                .trunc,
+                .floor,
                 => Payload.UnOp,
 
                 .add,
@@ -352,7 +398,6 @@ pub const Node = extern union {
                 .warning,
                 .type,
                 .helpers_macro,
-                .import_c_builtin,
                 => Payload.Value,
                 .discard => Payload.Discard,
                 .@"if" => Payload.If,
@@ -1000,6 +1045,14 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             .main_token = try c.addToken(.number_literal, "1"),
             .data = undefined,
         }),
+        .@"unreachable" => return c.addNode(.{
+            .tag = .unreachable_literal,
+            .main_token = try c.addToken(.keyword_unreachable, "unreachable"),
+            .data = .{
+                .lhs = 0,
+                .rhs = 0,
+            },
+        }),
         .void_type => return c.addNode(.{
             .tag = .identifier,
             .main_token = try c.addToken(.identifier, "void"),
@@ -1179,15 +1232,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 "zig",
                 "c_translation",
                 "Macros",
-                payload,
-            };
-            return renderStdImport(c, &chain);
-        },
-        .import_c_builtin => {
-            const payload = node.castTag(.import_c_builtin).?.data;
-            const chain = [_][]const u8{
-                "zig",
-                "c_builtins",
                 payload,
             };
             return renderStdImport(c, &chain);
@@ -1506,6 +1550,66 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .typeinfo => {
             const payload = node.castTag(.typeinfo).?.data;
             return renderBuiltinCall(c, "@typeInfo", &.{payload});
+        },
+        .byte_swap => {
+            const payload = node.castTag(.byte_swap).?.data;
+            return renderBuiltinCall(c, "@byteSwap", &.{payload});
+        },
+        .ceil => {
+            const payload = node.castTag(.ceil).?.data;
+            return renderBuiltinCall(c, "@ceil", &.{payload});
+        },
+        .cos => {
+            const payload = node.castTag(.cos).?.data;
+            return renderBuiltinCall(c, "@cos", &.{payload});
+        },
+        .sin => {
+            const payload = node.castTag(.sin).?.data;
+            return renderBuiltinCall(c, "@sin", &.{payload});
+        },
+        .exp => {
+            const payload = node.castTag(.exp).?.data;
+            return renderBuiltinCall(c, "@exp", &.{payload});
+        },
+        .exp2 => {
+            const payload = node.castTag(.exp2).?.data;
+            return renderBuiltinCall(c, "@exp2", &.{payload});
+        },
+        .exp10 => {
+            const payload = node.castTag(.exp10).?.data;
+            return renderBuiltinCall(c, "@exp10", &.{payload});
+        },
+        .abs => {
+            const payload = node.castTag(.abs).?.data;
+            return renderBuiltinCall(c, "@abs", &.{payload});
+        },
+        .log => {
+            const payload = node.castTag(.log).?.data;
+            return renderBuiltinCall(c, "@log", &.{payload});
+        },
+        .log2 => {
+            const payload = node.castTag(.log2).?.data;
+            return renderBuiltinCall(c, "@log2", &.{payload});
+        },
+        .log10 => {
+            const payload = node.castTag(.log10).?.data;
+            return renderBuiltinCall(c, "@log10", &.{payload});
+        },
+        .round => {
+            const payload = node.castTag(.round).?.data;
+            return renderBuiltinCall(c, "@round", &.{payload});
+        },
+        .sqrt => {
+            const payload = node.castTag(.sqrt).?.data;
+            return renderBuiltinCall(c, "@sqrt", &.{payload});
+        },
+        .trunc => {
+            const payload = node.castTag(.trunc).?.data;
+            return renderBuiltinCall(c, "@trunc", &.{payload});
+        },
+        .floor => {
+            const payload = node.castTag(.floor).?.data;
+            return renderBuiltinCall(c, "@floor", &.{payload});
         },
         .negate => return renderPrefixOp(c, node, .negation, .minus, "-"),
         .negate_wrap => return renderPrefixOp(c, node, .negation_wrap, .minus_percent, "-%"),
@@ -2514,6 +2618,21 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .extern_local_var,
         .mut_str,
         .macro_arithmetic,
+        .byte_swap,
+        .ceil,
+        .cos,
+        .sin,
+        .exp,
+        .exp2,
+        .exp10,
+        .abs,
+        .log,
+        .log2,
+        .log10,
+        .round,
+        .sqrt,
+        .trunc,
+        .floor,
         => {
             // no grouping needed
             return renderNode(c, node);
@@ -2603,8 +2722,8 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .bit_xor_assign,
         .assign,
         .helpers_macro,
-        .import_c_builtin,
         .static_assert,
+        .@"unreachable",
         => {
             // these should never appear in places where grouping might be needed.
             unreachable;

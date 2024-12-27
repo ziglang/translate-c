@@ -56,7 +56,7 @@ tree: Tree,
 comp: *aro.Compilation,
 mapper: aro.TypeMapper,
 
-rendered_builtins: std.EnumSet(builtins.Builtin) = .{},
+rendered_builtins: std.StringHashMapUnmanaged(void) = .{},
 render_buf: std.ArrayList(u8),
 
 fn getMangle(t: *Translator) u32 {
@@ -172,6 +172,7 @@ pub fn translate(
         translator.global_scope.deinit();
         translator.pattern_list.deinit(gpa);
         translator.render_buf.deinit();
+        translator.rendered_builtins.deinit(gpa);
     }
 
     try prepopulateGlobalNameTable(&translator);
@@ -1614,31 +1615,43 @@ fn transBuiltinCall(
         },
         else => unreachable,
     };
-    const builtin = std.meta.stringToEnum(builtins.Builtin, builtin_name) orelse {
+    const builtin = builtins.map.get(builtin_name) orelse {
         const call_loc = 0; // TODO builtin call source location
         return t.fail(error.UnsupportedTranslation, call_loc, "TODO implement function '{s}' in std.zig.c_builtins", .{builtin_name});
     };
 
-    if (builtin.source()) |source| {
-        if (!t.rendered_builtins.contains(builtin)) {
-            t.rendered_builtins.insert(builtin);
-            try t.render_buf.appendSlice(source);
-        }
+    if (builtin.tag) |tag| switch (tag) {
+        .byte_swap, .ceil, .cos, .sin, .exp, .exp2, .exp10, .abs, .log, .log2, .log10, .round, .sqrt, .trunc, .floor => {
+            assert(arg_nodes.len == 1);
+            const ptr = try t.arena.create(ast.Payload.UnOp);
+            ptr.* = .{
+                .base = .{ .tag = tag },
+                .data = try t.transExpr(scope, arg_nodes[0], .used),
+            };
+            return ZigNode.initPayload(&ptr.base);
+        },
+        .@"unreachable" => return ZigTag.@"unreachable".init(),
+        else => unreachable,
+    };
 
-        const args = try t.arena.alloc(ZigNode, arg_nodes.len);
-        for (arg_nodes, args) |arg_node, *arg| {
-            arg.* = try t.transExpr(scope, arg_node, .used);
-        }
-
-        const res = try ZigTag.call.create(t.arena, .{
-            .lhs = try ZigTag.fn_identifier.create(t.arena, builtin_name),
-            .args = args,
-        });
-        if (t.nodeType(call_node).is(.void)) return res;
-        return t.maybeSuppressResult(used, res);
+    // Overriding a builtin function is a hard error in C
+    // so we do not need to worry about aliasing.
+    const gop = try t.rendered_builtins.getOrPut(t.gpa, builtin_name);
+    if (!gop.found_existing) {
+        try t.render_buf.appendSlice(builtin.source);
     }
 
-    @panic("TODO transBulitinCall others");
+    const args = try t.arena.alloc(ZigNode, arg_nodes.len);
+    for (arg_nodes, args) |arg_node, *arg| {
+        arg.* = try t.transExpr(scope, arg_node, .used);
+    }
+
+    const res = try ZigTag.call.create(t.arena, .{
+        .lhs = try ZigTag.fn_identifier.create(t.arena, builtin_name),
+        .args = args,
+    });
+    if (t.nodeType(call_node).is(.void)) return res;
+    return t.maybeSuppressResult(used, res);
 }
 
 // =====================
