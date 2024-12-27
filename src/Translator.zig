@@ -1050,6 +1050,25 @@ fn transFnType(
     return ZigNode.initPayload(&payload.base);
 }
 
+/// Produces a Zig AST node by translating a Type, respecting the width, but modifying the signed-ness.
+/// Asserts the type is an integer.
+fn transTypeIntWidthOf(t: *Translator, ty: Type, is_signed: bool) TypeError!ZigNode {
+    return ZigTag.type.create(t.arena, switch (ty.specifier) {
+        .char, .schar, .uchar => if (is_signed) "i8" else "u8",
+        .short, .ushort => if (is_signed) "c_short" else "c_ushort",
+        .int, .uint => if (is_signed) "c_int" else "c_uint",
+        .long, .ulong => if (is_signed) "c_long" else "c_ulong",
+        .long_long, .ulong_long => if (is_signed) "c_longlong" else "c_ulonglong",
+        .int128, .uint128 => if (is_signed) "i128" else "u128",
+
+        .bit_int => try std.fmt.allocPrint(t.arena, "{s}{d}", .{
+            if (is_signed) "i" else "u",
+            ty.data.int.bits,
+        }),
+        else => unreachable, // only call this function when it has already been determined the type is int
+    });
+}
+
 // ============
 // Type helpers
 // ============
@@ -1202,6 +1221,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) T
         return t.maybeSuppressResult(used, as_node);
     }
     switch (t.nodeTag(expr)) {
+        .paren_expr => {
+            const operand = t.nodeData(expr).un;
+            return t.transExpr(scope, operand, used);
+        },
         .explicit_cast, .implicit_cast => return t.transCastExpr(scope, expr, used),
         .decl_ref_expr => return t.transDeclRefExpr(scope, expr),
         .addr_of_expr => {
@@ -1247,6 +1270,88 @@ fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) T
                 return ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, operand, .used));
             } else return fail(t, error.UnsupportedTranslation, t.nodeLoc(expr), "C negation with non float non integer", .{});
         },
+        .div_expr => {
+            if (ty.isUnsignedInt(t.comp)) {
+                const bin = t.nodeData(expr).bin;
+
+                // signed integer division uses @divTrunc
+                const lhs = try t.transExpr(scope, bin.lhs, .used);
+                const rhs = try t.transExpr(scope, bin.rhs, .used);
+                const div_trunc = try ZigTag.div_trunc.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
+                return t.maybeSuppressResult(used, div_trunc);
+            }
+            // unsigned/float division uses the operator
+            return t.transBinExpr(scope, expr, .div, used);
+        },
+        .mod_expr => {
+            if (ty.isUnsignedInt(t.comp)) {
+                const bin = t.nodeData(expr).bin;
+
+                // signed integer remainder uses std.zig.c_translation.signedRemainder
+                const lhs = try t.transExpr(scope, bin.lhs, .used);
+                const rhs = try t.transExpr(scope, bin.rhs, .used);
+                const rem = try ZigTag.signed_remainder.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
+                return t.maybeSuppressResult(used, rem);
+            }
+            // unsigned/float division uses the operator
+            return t.transBinExpr(scope, expr, .mod, used);
+        },
+        .add_expr => {
+            const bin = t.nodeData(expr).bin;
+
+            // `ptr + idx` and `idx + ptr` -> ptr + @as(usize, @bitCast(@as(isize, @intCast(idx))))
+            if (ty.isPtr() and (t.nodeType(bin.lhs).signedness(t.comp) == .signed or
+                t.nodeType(bin.rhs).signedness(t.comp) == .signed))
+            {
+                return t.transPointerArithmeticSignedOp(scope, expr, used);
+            }
+
+            if (ty.isUnsignedInt(t.comp)) {
+                return t.transBinExpr(scope, expr, .add_wrap, used);
+            } else {
+                return t.transBinExpr(scope, expr, .add, used);
+            }
+        },
+        .sub_expr => {
+            const bin = t.nodeData(expr).bin;
+
+            // `ptr - idx` -> ptr - @as(usize, @bitCast(@as(isize, @intCast(idx))))
+            if (ty.isPtr() and (t.nodeType(bin.lhs).signedness(t.comp) == .signed or
+                t.nodeType(bin.rhs).signedness(t.comp) == .signed))
+            {
+                return t.transPointerArithmeticSignedOp(scope, expr, used);
+            }
+
+            if (t.nodeType(bin.lhs).isPtr() and t.nodeType(bin.rhs).isPtr()) {
+                return t.transPtrDiffExpr(scope, expr, used);
+            } else if (ty.isUnsignedInt(t.comp)) {
+                return t.transBinExpr(scope, expr, .sub_wrap, used);
+            } else {
+                return t.transBinExpr(scope, expr, .sub, used);
+            }
+        },
+        .mul_expr => if (ty.isUnsignedInt(t.comp)) {
+            return t.transBinExpr(scope, expr, .mul_wrap, used);
+        } else {
+            return t.transBinExpr(scope, expr, .mul, used);
+        },
+
+        .less_than_expr => return t.transBinExpr(scope, expr, .less_than, used),
+        .greater_than_expr => return t.transBinExpr(scope, expr, .greater_than, used),
+        .less_than_equal_expr => return t.transBinExpr(scope, expr, .less_than_equal, used),
+        .greater_than_equal_expr => return t.transBinExpr(scope, expr, .greater_than_equal, used),
+        .equal_expr => return t.transBinExpr(scope, expr, .equal, used),
+        .not_equal_expr => return t.transBinExpr(scope, expr, .not_equal, used),
+
+        .bool_and_expr => return t.transBinExpr(scope, expr, .@"and", used),
+        .bool_or_expr => return t.transBinExpr(scope, expr, .@"or", used),
+
+        .bit_and_expr => return t.transBinExpr(scope, expr, .bit_and, used),
+        .bit_or_expr => return t.transBinExpr(scope, expr, .bit_or, used),
+        .bit_xor_expr => return t.transBinExpr(scope, expr, .bit_xor, used),
+
+        .shl_expr => return t.transShiftExpr(scope, expr, .shl, used),
+        .shr_expr => return t.transShiftExpr(scope, expr, .shr, used),
         else => unreachable, // Not an expression.
     }
 }
@@ -1362,6 +1467,121 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref_node: NodeIndex) Tra
     return ref_expr;
 }
 
+fn transBinExpr(
+    t: *Translator,
+    scope: *Scope,
+    bin_node: NodeIndex,
+    op_id: ZigTag,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const bin = t.nodeData(bin_node).bin;
+
+    const lhs_uncasted = try t.transExpr(scope, bin.lhs, .used);
+    const rhs_uncasted = try t.transExpr(scope, bin.rhs, .used);
+
+    const lhs = if (lhs_uncasted.isBoolRes())
+        try ZigTag.int_from_bool.create(t.arena, lhs_uncasted)
+    else
+        lhs_uncasted;
+
+    const rhs = if (rhs_uncasted.isBoolRes())
+        try ZigTag.int_from_bool.create(t.arena, rhs_uncasted)
+    else
+        rhs_uncasted;
+
+    return t.transCreateNodeInfixOp(op_id, lhs, rhs, used);
+}
+
+fn transShiftExpr(
+    t: *Translator,
+    scope: *Scope,
+    bin_node: NodeIndex,
+    op_id: ZigTag,
+    used: ResultUsed,
+) !ZigNode {
+    std.debug.assert(op_id == .shl or op_id == .shr);
+    const bin = t.nodeData(bin_node).bin;
+
+    // lhs >> @intCast(rh)
+    const lhs = try t.transExpr(scope, bin.lhs, .used);
+
+    const rhs = try t.transExprCoercing(scope, bin.rhs);
+    const rhs_casted = try ZigTag.int_cast.create(t.arena, rhs);
+
+    return t.transCreateNodeInfixOp(op_id, lhs, rhs_casted, used);
+}
+
+fn transPtrDiffExpr(
+    t: *Translator,
+    scope: *Scope,
+    bin_node: NodeIndex,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const bin = t.nodeData(bin_node).bin;
+
+    const lhs_uncasted = try t.transExpr(scope, bin.lhs, .used);
+    const rhs_uncasted = try t.transExpr(scope, bin.rhs, .used);
+
+    const lhs = try ZigTag.int_from_ptr.create(t.arena, lhs_uncasted);
+    const rhs = try ZigTag.int_from_ptr.create(t.arena, rhs_uncasted);
+
+    const sub_res = try t.transCreateNodeInfixOp(.sub_wrap, lhs, rhs, .used);
+
+    // @divExact(@as(<platform-ptrdiff_t>, @bitCast(@intFromPtr(lhs)) -% @intFromPtr(rhs)), @sizeOf(<lhs target type>))
+    const ptrdiff_type = try t.transTypeIntWidthOf(t.nodeType(bin_node), true);
+
+    const bitcast = try ZigTag.as.create(t.arena, .{
+        .lhs = ptrdiff_type,
+        .rhs = try ZigTag.bit_cast.create(t.arena, sub_res),
+    });
+
+    // C standard requires that pointer subtraction operands are of the same type,
+    // otherwise it is undefined behavior. So we can assume the left and right
+    // sides are the same Type and arbitrarily choose left.
+    const lhs_ty = try t.transType(scope, t.nodeType(bin.lhs), .standard, t.nodeLoc(bin.lhs));
+    const c_pointer = t.getContainer(lhs_ty).?;
+
+    if (c_pointer.castTag(.c_pointer)) |c_pointer_payload| {
+        const sizeof = try ZigTag.sizeof.create(t.arena, c_pointer_payload.data.elem_type);
+        const res = try ZigTag.div_exact.create(t.arena, .{
+            .lhs = bitcast,
+            .rhs = sizeof,
+        });
+        return t.maybeSuppressResult(used, res);
+    } else {
+        // This is an opaque/incomplete type. This subtraction exhibits Undefined Behavior by the C99 spec.
+        // However, allowing subtraction on `void *` and function pointers is a commonly used extension.
+        // So, just return the value in byte units, mirroring the behavior of this language extension as implemented by GCC and Clang.
+        return t.maybeSuppressResult(used, bitcast);
+    }
+}
+
+/// Translate an arithmetic expression with a pointer operand and a signed-integer operand.
+/// Zig requires a usize argument for pointer arithmetic, so we intCast to isize and then
+/// bitcast to usize; pointer wraparound makes the math work.
+/// Zig pointer addition is not commutative (unlike C); the pointer operand needs to be on the left.
+/// The + operator in C is not a sequence point so it should be safe to switch the order if necessary.
+fn transPointerArithmeticSignedOp(
+    t: *Translator,
+    scope: *Scope,
+    bin_node: NodeIndex,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const is_add = t.nodeTag(bin_node) == .add_expr;
+    const bin = t.nodeData(bin_node).bin;
+    const swap_operands = is_add and t.nodeType(bin.lhs).signedness(t.comp) == .signed;
+
+    const swizzled_lhs = if (swap_operands) bin.rhs else bin.lhs;
+    const swizzled_rhs = if (swap_operands) bin.lhs else bin.rhs;
+
+    const lhs_node = try t.transExpr(scope, swizzled_lhs, .used);
+    const rhs_node = try t.transExpr(scope, swizzled_rhs, .used);
+
+    const bitcast_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
+
+    return t.transCreateNodeInfixOp(if (is_add) .add else .sub, lhs_node, bitcast_node, used);
+}
+
 // =====================
 // Node creation helpers
 // =====================
@@ -1378,6 +1598,40 @@ fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     const res = try ZigTag.integer_literal.create(t.arena, str);
     if (is_negative) return ZigTag.negate.create(t.arena, res);
     return res;
+}
+
+fn transCreateNodeInfixOp(
+    t: *Translator,
+    op: ZigTag,
+    lhs: ZigNode,
+    rhs: ZigNode,
+    used: ResultUsed,
+) !ZigNode {
+    const payload = try t.arena.create(ast.Payload.BinOp);
+    payload.* = .{
+        .base = .{ .tag = op },
+        .data = .{
+            .lhs = lhs,
+            .rhs = rhs,
+        },
+    };
+    return t.maybeSuppressResult(used, ZigNode.initPayload(&payload.base));
+}
+
+/// Cast a signed integer node to a usize, for use in pointer arithmetic. Negative numbers
+/// will become very large positive numbers but that is ok since we only use this in
+/// pointer arithmetic expressions, where wraparound will ensure we get the correct value.
+/// node -> @as(usize, @bitCast(@as(isize, @intCast(node))))
+fn usizeCastForWrappingPtrArithmetic(t: *Translator, node: ZigNode) TransError!ZigNode {
+    const intcast_node = try ZigTag.as.create(t.arena, .{
+        .lhs = try ZigTag.type.create(t.arena, "isize"),
+        .rhs = try ZigTag.int_cast.create(t.arena, node),
+    });
+
+    return ZigTag.as.create(t.arena, .{
+        .lhs = try ZigTag.type.create(t.arena, "usize"),
+        .rhs = try ZigTag.bit_cast.create(t.arena, intcast_node),
+    });
 }
 
 // =================
@@ -1672,4 +1926,88 @@ test "Macro matching" {
     try helper.checkMacro(allocator, pattern_list, "IGNORE_ME(X) ((const volatile void)(X))", "DISCARD");
     try helper.checkMacro(allocator, pattern_list, "IGNORE_ME(X) (volatile const void)(X)", "DISCARD");
     try helper.checkMacro(allocator, pattern_list, "IGNORE_ME(X) ((volatile const void)(X))", "DISCARD");
+}
+
+fn getContainer(t: *Translator, node: ZigNode) ?ZigNode {
+    switch (node.tag()) {
+        .@"union",
+        .@"struct",
+        .address_of,
+        .bit_not,
+        .not,
+        .optional_type,
+        .negate,
+        .negate_wrap,
+        .array_type,
+        .c_pointer,
+        .single_pointer,
+        => return node,
+
+        .identifier => {
+            const ident = node.castTag(.identifier).?;
+            if (t.global_scope.sym_table.get(ident.data)) |value| {
+                if (value.castTag(.var_decl)) |var_decl|
+                    return t.getContainer(var_decl.data.init.?);
+                if (value.castTag(.var_simple) orelse value.castTag(.pub_var_simple)) |var_decl|
+                    return t.getContainer(var_decl.data.init);
+            }
+        },
+
+        .field_access => {
+            const field_access = node.castTag(.field_access).?;
+
+            if (t.getContainerTypeOf(field_access.data.lhs)) |ty_node| {
+                if (ty_node.castTag(.@"struct") orelse ty_node.castTag(.@"union")) |container| {
+                    for (container.data.fields) |field| {
+                        if (mem.eql(u8, field.name, field_access.data.field_name)) {
+                            return t.getContainer(field.type);
+                        }
+                    }
+                }
+            }
+        },
+
+        else => {},
+    }
+    return null;
+}
+
+fn getContainerTypeOf(t: *Translator, ref: ZigNode) ?ZigNode {
+    if (ref.castTag(.identifier)) |ident| {
+        if (t.global_scope.sym_table.get(ident.data)) |value| {
+            if (value.castTag(.var_decl)) |var_decl| {
+                return t.getContainer(var_decl.data.type);
+            }
+        }
+    } else if (ref.castTag(.field_access)) |field_access| {
+        if (t.getContainerTypeOf(field_access.data.lhs)) |ty_node| {
+            if (ty_node.castTag(.@"struct") orelse ty_node.castTag(.@"union")) |container| {
+                for (container.data.fields) |field| {
+                    if (mem.eql(u8, field.name, field_access.data.field_name)) {
+                        return t.getContainer(field.type);
+                    }
+                }
+            } else return ty_node;
+        }
+    }
+    return null;
+}
+
+fn getFnProto(t: *Translator, ref: ZigNode) ?*ast.Payload.Func {
+    const init = if (ref.castTag(.var_decl)) |v|
+        v.data.init orelse return null
+    else if (ref.castTag(.var_simple) orelse ref.castTag(.pub_var_simple)) |v|
+        v.data.init
+    else
+        return null;
+    if (t.getContainerTypeOf(init)) |ty_node| {
+        if (ty_node.castTag(.optional_type)) |prefix| {
+            if (prefix.data.castTag(.single_pointer)) |sp| {
+                if (sp.data.elem_type.castTag(.func)) |fn_proto| {
+                    return fn_proto;
+                }
+            }
+        }
+    }
+    return null;
 }
