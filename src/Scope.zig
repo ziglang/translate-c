@@ -37,7 +37,7 @@ pub const Condition = struct {
         return &cond.block.?;
     }
 
-    fn deinit(cond: *Condition) void {
+    pub fn deinit(cond: *Condition) void {
         if (cond.block) |*b| b.deinit();
     }
 };

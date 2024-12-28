@@ -1175,6 +1175,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: NodeIndex) TransError!ZigNode 
         },
         .return_stmt => return t.transReturnStmt(scope, stmt),
         .null_stmt => return ZigTag.empty_block.init(),
+        .if_then_else_stmt, .if_then_stmt => return t.transIfStmt(scope, stmt),
         else => |tag| return t.fail(error.UnsupportedTranslation, t.nodeLoc(stmt), "TODO implement translation of stmt {s}", .{@tagName(tag)}),
     }
 }
@@ -1207,6 +1208,83 @@ fn transReturnStmt(t: *Translator, scope: *Scope, return_stmt: NodeIndex) TransE
         rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
     }
     return ZigTag.@"return".create(t.arena, rhs);
+}
+
+/// If a statement can possibly translate to a Zig assignment (either directly because it's
+/// an assignment in C or indirectly via result assignment to `_`) AND it's the sole statement
+/// in the body of an if statement or loop, then we need to put the statement into its own block.
+/// The `else` case here corresponds to statements that could result in an assignment. If a statement
+/// class never needs a block, add its enum to the top prong.
+fn maybeBlockify(t: *Translator, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
+    switch (t.nodeTag(stmt)) {
+        .break_stmt,
+        .continue_stmt,
+        .compound_stmt_two,
+        .compound_stmt,
+        .decl_ref_expr,
+        .enumeration_ref,
+        .do_while_stmt,
+        .for_decl_stmt,
+        .forever_stmt,
+        .for_stmt,
+        .if_then_else_stmt,
+        .if_then_stmt,
+        .return_stmt,
+        .null_stmt,
+        .while_stmt,
+        => return t.transStmt(scope, stmt),
+        else => return t.blockify(scope, stmt),
+    }
+}
+
+/// Translate statement and place it in its own block.
+fn blockify(t: *Translator, scope: *Scope, stmt: NodeIndex) TransError!ZigNode {
+    var block_scope = try Scope.Block.init(t, scope, false);
+    defer block_scope.deinit();
+    const result = try t.transStmt(&block_scope.base, stmt);
+    try block_scope.statements.append(t.gpa, result);
+    return block_scope.complete();
+}
+
+fn transIfStmt(t: *Translator, scope: *Scope, if_stmt: NodeIndex) TransError!ZigNode {
+    // TODO would be nice to have a helper for this
+    const cond_expr, const then_stmt, const else_stmt = switch (t.nodeTag(if_stmt)) {
+        .if_then_else_stmt => blk: {
+            const if3 = t.nodeData(if_stmt).if3;
+            break :blk .{ if3.cond, t.tree.data[if3.body], t.tree.data[if3.body + 1] };
+        },
+        .if_then_stmt => blk: {
+            const bin = t.nodeData(if_stmt).bin;
+            break :blk .{ bin.lhs, bin.rhs, null };
+        },
+        else => unreachable,
+    };
+
+    var cond_scope: Scope.Condition = .{
+        .base = .{
+            .parent = scope,
+            .id = .condition,
+        },
+    };
+    defer cond_scope.deinit();
+    const cond = try t.transBoolExpr(&cond_scope.base, cond_expr);
+
+    // block needed to keep else statement from attaching to inner while
+    const must_blockify = (else_stmt != null) and switch (t.nodeTag(then_stmt)) {
+        .while_stmt, .do_while_stmt, .for_decl_stmt, .forever_stmt, .for_stmt => true,
+        else => false,
+    };
+
+    const then_node = if (must_blockify)
+        try t.blockify(scope, then_stmt)
+    else
+        try t.maybeBlockify(scope, then_stmt);
+
+    const else_node = if (else_stmt) |expr|
+        try t.maybeBlockify(scope, expr)
+    else
+        null;
+    return ZigTag.@"if".create(t.arena, .{ .cond = cond, .then = then_node, .@"else" = else_node });
 }
 
 // ======================
@@ -1418,7 +1496,8 @@ fn transCastExpr(t: *Translator, scope: *Scope, cast_node: NodeIndex, used: Resu
             return t.maybeSuppressResult(used, sub_expr_node);
         },
         .to_void => {
-            return t.transExpr(scope, cast.operand, used);
+            assert(used == .unused);
+            return t.transExpr(scope, cast.operand, .unused);
         },
         else => return t.fail(error.UnsupportedTranslation, t.nodeLoc(cast_node), "TODO translate {s} cast", .{@tagName(cast.kind)}),
     }
