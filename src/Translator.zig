@@ -1225,40 +1225,36 @@ fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) T
         });
         return t.maybeSuppressResult(used, as_node);
     }
-    switch (t.nodeTag(expr)) {
+    return t.maybeSuppressResult(used, switch (t.nodeTag(expr)) {
         .paren_expr => {
             const operand = t.nodeData(expr).un;
             return t.transExpr(scope, operand, used);
         },
         .explicit_cast, .implicit_cast => return t.transCastExpr(scope, expr, used),
-        .decl_ref_expr => return t.transDeclRefExpr(scope, expr),
-        .addr_of_expr => {
+        .decl_ref_expr => try t.transDeclRefExpr(scope, expr),
+        .addr_of_expr => res: {
             const operand = t.nodeData(expr).un;
-            const res = try ZigTag.address_of.create(t.arena, try t.transExpr(scope, operand, .used));
-            return t.maybeSuppressResult(used, res);
+            break :res try ZigTag.address_of.create(t.arena, try t.transExpr(scope, operand, .used));
         },
-        .deref_expr => {
+        .deref_expr => res: {
             if (t.typeWasDemotedToOpaque(ty))
                 return fail(t, error.UnsupportedTranslation, t.nodeLoc(expr), "cannot dereference opaque type", .{});
 
             const operand = t.nodeData(expr).un;
             // Dereferencing a function pointer is a no-op.
-            if (ty.isFunc()) return try t.transExpr(scope, operand, used);
+            if (ty.isFunc()) return t.transExpr(scope, operand, used);
 
-            const res = try ZigTag.deref.create(t.arena, try t.transExpr(scope, operand, .used));
-            return t.maybeSuppressResult(used, res);
+            break :res try ZigTag.deref.create(t.arena, try t.transExpr(scope, operand, .used));
         },
-        .bool_not_expr => {
+        .bool_not_expr => res: {
             const operand = t.nodeData(expr).un;
-            const res = try ZigTag.not.create(t.arena, try t.transBoolExpr(scope, operand, .used));
-            return t.maybeSuppressResult(used, res);
+            break :res try ZigTag.not.create(t.arena, try t.transBoolExpr(scope, operand));
         },
-        .bit_not_expr => {
+        .bit_not_expr => res: {
             const operand = t.nodeData(expr).un;
-            const res = try ZigTag.bit_not.create(t.arena, try t.transExpr(scope, operand, .used));
-            return t.maybeSuppressResult(used, res);
+            break :res try ZigTag.bit_not.create(t.arena, try t.transExpr(scope, operand, .used));
         },
-        .negate_expr => {
+        .negate_expr => res: {
             const operand = t.nodeData(expr).un;
             const operand_ty = t.nodeType(expr);
             if (!t.typeHasWrappingOverflow(operand_ty)) {
@@ -1269,99 +1265,96 @@ fn transExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) T
                     break :blk try ZigTag.as.create(t.arena, .{ .lhs = ty_node, .rhs = int_node });
                 } else sub_expr_node;
 
-                return ZigTag.negate.create(t.arena, to_negate);
+                break :res try ZigTag.negate.create(t.arena, to_negate);
             } else if (operand_ty.isUnsignedInt(t.comp)) {
                 // use -% x for unsigned integers
-                return ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, operand, .used));
+                break :res try ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, operand, .used));
             } else return fail(t, error.UnsupportedTranslation, t.nodeLoc(expr), "C negation with non float non integer", .{});
         },
-        .div_expr => {
+        .div_expr => res: {
             if (ty.isUnsignedInt(t.comp)) {
                 const bin = t.nodeData(expr).bin;
 
                 // signed integer division uses @divTrunc
                 const lhs = try t.transExpr(scope, bin.lhs, .used);
                 const rhs = try t.transExpr(scope, bin.rhs, .used);
-                const div_trunc = try ZigTag.div_trunc.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
-                return t.maybeSuppressResult(used, div_trunc);
+                break :res try ZigTag.div_trunc.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
             }
             // unsigned/float division uses the operator
-            return t.transBinExpr(scope, expr, .div, used);
+            break :res try t.transBinExpr(scope, expr, .div);
         },
-        .mod_expr => {
+        .mod_expr => res: {
             if (ty.isUnsignedInt(t.comp)) {
                 const bin = t.nodeData(expr).bin;
 
                 // signed integer remainder uses std.zig.c_translation.signedRemainder
                 const lhs = try t.transExpr(scope, bin.lhs, .used);
                 const rhs = try t.transExpr(scope, bin.rhs, .used);
-                const rem = try ZigTag.signed_remainder.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
-                return t.maybeSuppressResult(used, rem);
+                break :res try ZigTag.signed_remainder.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
             }
             // unsigned/float division uses the operator
-            return t.transBinExpr(scope, expr, .mod, used);
+            break :res try t.transBinExpr(scope, expr, .mod);
         },
-        .add_expr => {
+        .add_expr => res: {
             const bin = t.nodeData(expr).bin;
 
             // `ptr + idx` and `idx + ptr` -> ptr + @as(usize, @bitCast(@as(isize, @intCast(idx))))
             if (ty.isPtr() and (t.nodeType(bin.lhs).signedness(t.comp) == .signed or
                 t.nodeType(bin.rhs).signedness(t.comp) == .signed))
             {
-                return t.transPointerArithmeticSignedOp(scope, expr, used);
+                break :res try t.transPointerArithmeticSignedOp(scope, expr);
             }
 
             if (ty.isUnsignedInt(t.comp)) {
-                return t.transBinExpr(scope, expr, .add_wrap, used);
+                break :res try t.transBinExpr(scope, expr, .add_wrap);
             } else {
-                return t.transBinExpr(scope, expr, .add, used);
+                break :res try t.transBinExpr(scope, expr, .add);
             }
         },
-        .sub_expr => {
+        .sub_expr => res: {
             const bin = t.nodeData(expr).bin;
 
             // `ptr - idx` -> ptr - @as(usize, @bitCast(@as(isize, @intCast(idx))))
             if (ty.isPtr() and (t.nodeType(bin.lhs).signedness(t.comp) == .signed or
                 t.nodeType(bin.rhs).signedness(t.comp) == .signed))
             {
-                return t.transPointerArithmeticSignedOp(scope, expr, used);
+                break :res try t.transPointerArithmeticSignedOp(scope, expr);
             }
 
             if (t.nodeType(bin.lhs).isPtr() and t.nodeType(bin.rhs).isPtr()) {
-                return t.transPtrDiffExpr(scope, expr, used);
+                break :res try t.transPtrDiffExpr(scope, expr);
             } else if (ty.isUnsignedInt(t.comp)) {
-                return t.transBinExpr(scope, expr, .sub_wrap, used);
+                break :res try t.transBinExpr(scope, expr, .sub_wrap);
             } else {
-                return t.transBinExpr(scope, expr, .sub, used);
+                break :res try t.transBinExpr(scope, expr, .sub);
             }
         },
-        .mul_expr => if (ty.isUnsignedInt(t.comp)) {
-            return t.transBinExpr(scope, expr, .mul_wrap, used);
-        } else {
-            return t.transBinExpr(scope, expr, .mul, used);
-        },
+        .mul_expr => if (ty.isUnsignedInt(t.comp))
+            try t.transBinExpr(scope, expr, .mul_wrap)
+        else
+            try t.transBinExpr(scope, expr, .mul),
 
-        .less_than_expr => return t.transBinExpr(scope, expr, .less_than, used),
-        .greater_than_expr => return t.transBinExpr(scope, expr, .greater_than, used),
-        .less_than_equal_expr => return t.transBinExpr(scope, expr, .less_than_equal, used),
-        .greater_than_equal_expr => return t.transBinExpr(scope, expr, .greater_than_equal, used),
-        .equal_expr => return t.transBinExpr(scope, expr, .equal, used),
-        .not_equal_expr => return t.transBinExpr(scope, expr, .not_equal, used),
+        .less_than_expr => try t.transBinExpr(scope, expr, .less_than),
+        .greater_than_expr => try t.transBinExpr(scope, expr, .greater_than),
+        .less_than_equal_expr => try t.transBinExpr(scope, expr, .less_than_equal),
+        .greater_than_equal_expr => try t.transBinExpr(scope, expr, .greater_than_equal),
+        .equal_expr => try t.transBinExpr(scope, expr, .equal),
+        .not_equal_expr => try t.transBinExpr(scope, expr, .not_equal),
 
-        .bool_and_expr => return t.transBinExpr(scope, expr, .@"and", used),
-        .bool_or_expr => return t.transBinExpr(scope, expr, .@"or", used),
+        .bool_and_expr => try t.transBinExpr(scope, expr, .@"and"),
+        .bool_or_expr => try t.transBinExpr(scope, expr, .@"or"),
 
-        .bit_and_expr => return t.transBinExpr(scope, expr, .bit_and, used),
-        .bit_or_expr => return t.transBinExpr(scope, expr, .bit_or, used),
-        .bit_xor_expr => return t.transBinExpr(scope, expr, .bit_xor, used),
+        .bit_and_expr => try t.transBinExpr(scope, expr, .bit_and),
+        .bit_or_expr => try t.transBinExpr(scope, expr, .bit_or),
+        .bit_xor_expr => try t.transBinExpr(scope, expr, .bit_xor),
 
-        .shl_expr => return t.transShiftExpr(scope, expr, .shl, used),
-        .shr_expr => return t.transShiftExpr(scope, expr, .shr, used),
+        .shl_expr => try t.transShiftExpr(scope, expr, .shl),
+        .shr_expr => try t.transShiftExpr(scope, expr, .shr),
 
         .builtin_call_expr => return t.transBuiltinCall(scope, expr, used),
         .builtin_call_expr_one => return t.transBuiltinCall(scope, expr, used),
         else => unreachable, // Not an expression.
-    }
+    });
 }
 
 /// Same as `transExpr` but with the knowledge that the operand will be type coerced, and therefore
@@ -1371,7 +1364,7 @@ fn transExprCoercing(t: *Translator, scope: *Scope, expr: NodeIndex) TransError!
     return t.transExpr(scope, expr, .used);
 }
 
-fn transBoolExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUsed) TransError!ZigNode {
+fn transBoolExpr(t: *Translator, scope: *Scope, expr: NodeIndex) TransError!ZigNode {
     const expr_tag = t.nodeTag(expr);
     if (expr_tag == .int_literal) {
         const int_val = t.tree.value_map.get(expr).?;
@@ -1383,19 +1376,17 @@ fn transBoolExpr(t: *Translator, scope: *Scope, expr: NodeIndex, used: ResultUse
     if (expr_tag == .implicit_cast) {
         const cast = t.nodeData(expr).cast;
         if (cast.kind == .bool_to_int) {
-            const bool_res = try t.transExpr(scope, cast.operand, .used);
-            return t.maybeSuppressResult(used, bool_res);
+            return t.transExpr(scope, cast.operand, .used);
         }
     }
 
     const maybe_bool_res = try t.transExpr(scope, expr, .used);
     if (maybe_bool_res.isBoolRes()) {
-        return t.maybeSuppressResult(used, maybe_bool_res);
+        return maybe_bool_res;
     }
 
     const ty = t.nodeType(expr);
-    const res = try t.finishBoolExpr(ty, maybe_bool_res);
-    return t.maybeSuppressResult(used, res);
+    return t.finishBoolExpr(ty, maybe_bool_res);
 }
 
 fn finishBoolExpr(t: *Translator, ty: Type, node: ZigNode) TransError!ZigNode {
@@ -1425,6 +1416,9 @@ fn transCastExpr(t: *Translator, scope: *Scope, cast_node: NodeIndex, used: Resu
         .lval_to_rval, .no_op, .function_to_pointer => {
             const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             return t.maybeSuppressResult(used, sub_expr_node);
+        },
+        .to_void => {
+            return t.transExpr(scope, cast.operand, used);
         },
         else => return t.fail(error.UnsupportedTranslation, t.nodeLoc(cast_node), "TODO translate {s} cast", .{@tagName(cast.kind)}),
     }
@@ -1475,13 +1469,7 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref_node: NodeIndex) Tra
     return ref_expr;
 }
 
-fn transBinExpr(
-    t: *Translator,
-    scope: *Scope,
-    bin_node: NodeIndex,
-    op_id: ZigTag,
-    used: ResultUsed,
-) TransError!ZigNode {
+fn transBinExpr(t: *Translator, scope: *Scope, bin_node: NodeIndex, op_id: ZigTag) TransError!ZigNode {
     const bin = t.nodeData(bin_node).bin;
 
     const lhs_uncasted = try t.transExpr(scope, bin.lhs, .used);
@@ -1497,16 +1485,10 @@ fn transBinExpr(
     else
         rhs_uncasted;
 
-    return t.transCreateNodeInfixOp(op_id, lhs, rhs, used);
+    return t.transCreateNodeInfixOp(op_id, lhs, rhs);
 }
 
-fn transShiftExpr(
-    t: *Translator,
-    scope: *Scope,
-    bin_node: NodeIndex,
-    op_id: ZigTag,
-    used: ResultUsed,
-) !ZigNode {
+fn transShiftExpr(t: *Translator, scope: *Scope, bin_node: NodeIndex, op_id: ZigTag) !ZigNode {
     std.debug.assert(op_id == .shl or op_id == .shr);
     const bin = t.nodeData(bin_node).bin;
 
@@ -1516,15 +1498,10 @@ fn transShiftExpr(
     const rhs = try t.transExprCoercing(scope, bin.rhs);
     const rhs_casted = try ZigTag.int_cast.create(t.arena, rhs);
 
-    return t.transCreateNodeInfixOp(op_id, lhs, rhs_casted, used);
+    return t.transCreateNodeInfixOp(op_id, lhs, rhs_casted);
 }
 
-fn transPtrDiffExpr(
-    t: *Translator,
-    scope: *Scope,
-    bin_node: NodeIndex,
-    used: ResultUsed,
-) TransError!ZigNode {
+fn transPtrDiffExpr(t: *Translator, scope: *Scope, bin_node: NodeIndex) TransError!ZigNode {
     const bin = t.nodeData(bin_node).bin;
 
     const lhs_uncasted = try t.transExpr(scope, bin.lhs, .used);
@@ -1533,7 +1510,7 @@ fn transPtrDiffExpr(
     const lhs = try ZigTag.int_from_ptr.create(t.arena, lhs_uncasted);
     const rhs = try ZigTag.int_from_ptr.create(t.arena, rhs_uncasted);
 
-    const sub_res = try t.transCreateNodeInfixOp(.sub_wrap, lhs, rhs, .used);
+    const sub_res = try t.transCreateNodeInfixOp(.sub_wrap, lhs, rhs);
 
     // @divExact(@as(<platform-ptrdiff_t>, @bitCast(@intFromPtr(lhs)) -% @intFromPtr(rhs)), @sizeOf(<lhs target type>))
     const ptrdiff_type = try t.transTypeIntWidthOf(t.nodeType(bin_node), true);
@@ -1551,16 +1528,15 @@ fn transPtrDiffExpr(
 
     if (c_pointer.castTag(.c_pointer)) |c_pointer_payload| {
         const sizeof = try ZigTag.sizeof.create(t.arena, c_pointer_payload.data.elem_type);
-        const res = try ZigTag.div_exact.create(t.arena, .{
+        return ZigTag.div_exact.create(t.arena, .{
             .lhs = bitcast,
             .rhs = sizeof,
         });
-        return t.maybeSuppressResult(used, res);
     } else {
         // This is an opaque/incomplete type. This subtraction exhibits Undefined Behavior by the C99 spec.
         // However, allowing subtraction on `void *` and function pointers is a commonly used extension.
         // So, just return the value in byte units, mirroring the behavior of this language extension as implemented by GCC and Clang.
-        return t.maybeSuppressResult(used, bitcast);
+        return bitcast;
     }
 }
 
@@ -1569,12 +1545,7 @@ fn transPtrDiffExpr(
 /// bitcast to usize; pointer wraparound makes the math work.
 /// Zig pointer addition is not commutative (unlike C); the pointer operand needs to be on the left.
 /// The + operator in C is not a sequence point so it should be safe to switch the order if necessary.
-fn transPointerArithmeticSignedOp(
-    t: *Translator,
-    scope: *Scope,
-    bin_node: NodeIndex,
-    used: ResultUsed,
-) TransError!ZigNode {
+fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin_node: NodeIndex) TransError!ZigNode {
     const is_add = t.nodeTag(bin_node) == .add_expr;
     const bin = t.nodeData(bin_node).bin;
     const swap_operands = is_add and t.nodeType(bin.lhs).signedness(t.comp) == .signed;
@@ -1587,7 +1558,7 @@ fn transPointerArithmeticSignedOp(
 
     const bitcast_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
 
-    return t.transCreateNodeInfixOp(if (is_add) .add else .sub, lhs_node, bitcast_node, used);
+    return t.transCreateNodeInfixOp(if (is_add) .add else .sub, lhs_node, bitcast_node);
 }
 
 fn transBuiltinCall(
@@ -1677,7 +1648,6 @@ fn transCreateNodeInfixOp(
     op: ZigTag,
     lhs: ZigNode,
     rhs: ZigNode,
-    used: ResultUsed,
 ) !ZigNode {
     const payload = try t.arena.create(ast.Payload.BinOp);
     payload.* = .{
@@ -1687,7 +1657,7 @@ fn transCreateNodeInfixOp(
             .rhs = rhs,
         },
     };
-    return t.maybeSuppressResult(used, ZigNode.initPayload(&payload.base));
+    return ZigNode.initPayload(&payload.base);
 }
 
 /// Cast a signed integer node to a usize, for use in pointer arithmetic. Negative numbers
