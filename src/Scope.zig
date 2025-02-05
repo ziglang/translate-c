@@ -61,12 +61,12 @@ pub const Block = struct {
 
     /// When the block corresponds to a function, keep track of the return type
     /// so that the return expression can be cast, if necessary
-    return_type: ?aro.Type = null,
+    return_type: ?aro.QualType = null,
 
     /// C static local variables are wrapped in a block-local struct. The struct
     /// is named after the (mangled) variable name, the Zig variable within the
     /// struct itself is given this name.
-    const static_inner_name = "static";
+    pub const static_inner_name = "static";
 
     /// C extern variables declared within a block are wrapped in a block-local
     /// struct. The struct is named ExternLocal_[variable_name], the Zig variable
@@ -248,14 +248,14 @@ pub fn findBlockScope(inner: *Scope, t: *Translator) !*Block {
     }
 }
 
-pub fn findBlockReturnType(inner: *Scope) aro.Type {
+pub fn findBlockReturnType(inner: *Scope) aro.QualType {
     var scope = inner;
     while (true) {
         switch (scope.id) {
             .root => unreachable,
             .block => {
                 const block: *Block = @fieldParentPtr("base", scope);
-                if (block.return_type) |ty| return ty;
+                if (block.return_type) |qt| return qt;
                 scope = scope.parent.?;
             },
             else => scope = scope.parent.?,
@@ -271,7 +271,7 @@ pub fn getAlias(scope: *Scope, name: []const u8) []const u8 {
     };
 }
 
-fn getLocalExternAlias(scope: *Scope, name: []const u8) ?[]const u8 {
+pub fn getLocalExternAlias(scope: *Scope, name: []const u8) ?[]const u8 {
     return switch (scope.id) {
         .root => null,
         .block => ret: {

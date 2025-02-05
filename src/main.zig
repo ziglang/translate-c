@@ -86,7 +86,7 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         return;
     }
 
-    const rendered_zig = try Translator.translate(gpa, d.comp, c_tree);
+    const rendered_zig = try Translator.translate(gpa, d.comp, &c_tree);
     defer gpa.free(rendered_zig);
 
     var close_out_file = false;
