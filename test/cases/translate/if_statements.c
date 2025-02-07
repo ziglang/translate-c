@@ -21,5 +21,4 @@ void foo() {
 //         var a: c_int = 2;
 //         _ = &a;
 //     }
-//     return;
 // }

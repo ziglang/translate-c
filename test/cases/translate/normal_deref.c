@@ -9,5 +9,4 @@ void foo() {
 //     var x: [*c]c_int = undefined;
 //     _ = &x;
 //     x.* = 1;
-//     return;
 // }

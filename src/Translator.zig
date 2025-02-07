@@ -781,7 +781,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         .void => return ZigTag.type.create(t.arena, "anyopaque"),
         .bool => return ZigTag.type.create(t.arena, "bool"),
         .int => |int_ty| switch (int_ty) {
-            //.char => return ZigTag.type.create(t.arena, "c_char"), // TODO: why is this different than clang translate-c?
+            //.char => return ZigTag.type.create(t.arena, "c_char"), // TODO: this is the preferred translation
             .char => return ZigTag.type.create(t.arena, "u8"),
             .schar => return ZigTag.type.create(t.arena, "i8"),
             .uchar => return ZigTag.type.create(t.arena, "u8"),
@@ -1196,7 +1196,7 @@ fn transReturnStmt(t: *Translator, scope: *Scope, return_stmt: Node.ReturnStmt) 
             if (zero) return ZigTag.@"return".create(t.arena, ZigTag.zero_literal.init());
 
             const return_qt = scope.findBlockReturnType();
-            if (return_qt.type(t.comp) == .void) return ZigTag.return_void.init();
+            if (return_qt.type(t.comp) == .void) return ZigTag.empty_block.init();
 
             return ZigTag.@"return".create(t.arena, ZigTag.undefined_literal.init());
         },

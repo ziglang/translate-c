@@ -31,5 +31,4 @@ void foo(void) {
 //     _ = &h;
 //     const i: c_uint = 1;
 //     _ = &i;
-//     return;
 // }

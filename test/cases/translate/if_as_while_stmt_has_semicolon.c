@@ -18,5 +18,4 @@ void foo() {
 //         _ = &b;
 //     };
 //     if (true) if (true) {};
-//     return;
 // }

@@ -9,5 +9,4 @@ void foo() {
 //     var a: c_int = undefined;
 //     _ = &a;
 //     _ = &a;
-//     return;
 // }

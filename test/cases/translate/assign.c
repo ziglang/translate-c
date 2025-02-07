@@ -13,5 +13,4 @@ void max(int a) {
 //     _ = &tmp;
 //     tmp = a;
 //     a = tmp;
-//     return;
 // }
