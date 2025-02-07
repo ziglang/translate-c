@@ -20,5 +20,5 @@ int max(int a, int b) {
 //     if (a < b) return b;
 //     if (a < b) return b else return a;
 //     if (a < b) {} else {}
-//     return 0;
+//     return undefined;
 // }

@@ -619,7 +619,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     payload.* = .{
         .base = .{ .tag = ZigTag.var_decl },
         .data = .{
-            .is_pub = false,
+            .is_pub = toplevel,
             .is_const = variable.qt.@"const",
             .is_extern = false,
             .is_export = false,
@@ -1160,9 +1160,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             try t.transDecl(scope, stmt);
             return ZigTag.declaration.init();
         },
-        // TODO: is there a nice way to check if the tag is an expression?
         else => return t.transExprCoercing(scope, stmt, .unused),
-        //else => |tag| return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO implement translation of stmt {s}", .{@tagName(tag)}),
     }
 }
 
@@ -1198,10 +1196,9 @@ fn transReturnStmt(t: *Translator, scope: *Scope, return_stmt: Node.ReturnStmt) 
             if (zero) return ZigTag.@"return".create(t.arena, ZigTag.zero_literal.init());
 
             const return_qt = scope.findBlockReturnType();
-            if (return_qt.type(t.comp) == .void) return ZigTag.empty_block.init();
+            if (return_qt.type(t.comp) == .void) return ZigTag.return_void.init();
 
-            const implicit_value = try t.transZeroInitExpr(return_qt);
-            return ZigTag.@"return".create(t.arena, implicit_value);
+            return ZigTag.@"return".create(t.arena, ZigTag.undefined_literal.init());
         },
     }
 }
@@ -1400,7 +1397,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr),
         .comma_expr => |comma_expr| try t.transCommaExpr(scope, comma_expr),
-        .assign_expr => |assign_expr| return try t.transCreateNodeAssign(scope, used, assign_expr),
+        .assign_expr => |assign_expr| return try t.transAssignExpr(scope, used, assign_expr),
 
         .int_literal => res: {
             const val = t.tree.value_map.get(expr).?;
@@ -1672,6 +1669,22 @@ fn transCommaExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!Zi
     return try block_scope.complete();
 }
 
+fn transAssignExpr(t: *Translator, scope: *Scope, used: ResultUsed, bin: Node.Binary) !ZigNode {
+    if (used == .unused) {
+        const lhs = try t.transExpr(scope, bin.lhs, .used);
+        var rhs = try t.transExprCoercing(scope, bin.rhs, .used);
+
+        const lhs_qt = bin.lhs.qt(t.tree);
+        if (rhs.isBoolRes() and !lhs_qt.is(t.comp, .bool)) {
+            rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
+        }
+
+        return t.transCreateNodeInfixOp(.assign, lhs, rhs);
+    }
+
+    return t.fail(error.UnsupportedTranslation, bin.op_tok, "TODO implement translation of .used assignment", .{});
+}
+
 fn transPtrDiffExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!ZigNode {
     const lhs_uncasted = try t.transExpr(scope, bin.lhs, .used);
     const rhs_uncasted = try t.transExpr(scope, bin.rhs, .used);
@@ -1791,21 +1804,6 @@ fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     if (is_negative) return ZigTag.negate.create(t.arena, res);
     return res;
 }
-fn transCreateNodeAssign(t: *Translator, scope: *Scope, used: ResultUsed, bin: Node.Binary) !ZigNode {
-    if (used == .unused) {
-        const lhs = try t.transExpr(scope, bin.lhs, .used);
-        var rhs = try t.transExprCoercing(scope, bin.rhs, .used);
-
-        const lhs_qt = bin.lhs.qt(t.tree);
-        if (rhs.isBoolRes() and !lhs_qt.is(t.comp, .bool)) {
-            rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
-        }
-
-        return t.transCreateNodeInfixOp(.assign, lhs, rhs);
-    }
-
-    return t.fail(error.UnsupportedTranslation, bin.op_tok, "TODO implement translation of .used assignment", .{});
-}
 
 fn transCreateNodeInfixOp(
     t: *Translator,
@@ -1822,15 +1820,6 @@ fn transCreateNodeInfixOp(
         },
     };
     return ZigNode.initPayload(&payload.base);
-}
-
-fn transZeroInitExpr(t: *Translator, qt: QualType) TransError!ZigNode {
-    switch (qt.type(t.comp)) {
-        .bool => return ZigTag.false_literal.init(),
-        .int, .float => return ZigTag.zero_literal.init(),
-        .pointer => return ZigTag.null_literal.init(),
-        else => return error.UnsupportedType,
-    }
 }
 
 /// Cast a signed integer node to a usize, for use in pointer arithmetic. Negative numbers

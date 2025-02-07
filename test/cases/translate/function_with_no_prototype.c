@@ -3,7 +3,6 @@ int foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() c_int {
 //     return 5;

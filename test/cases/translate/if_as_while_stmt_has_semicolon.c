@@ -8,7 +8,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     while (true) if (true) {
@@ -19,4 +18,5 @@ void foo() {
 //         _ = &b;
 //     };
 //     if (true) if (true) {};
+//     return;
 // }
