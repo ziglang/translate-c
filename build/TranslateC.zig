@@ -113,15 +113,15 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const translate_c: *TranslateC = @fieldParentPtr("step", step);
 
     var argv_list = std.ArrayList([]const u8).init(b.allocator);
-    try argv_list.append(translate_c.translate_c_exe.getEmittedBin().getPath(b));
+    const exe_path = translate_c.translate_c_exe.getEmittedBin().getPath(b);
+    try argv_list.append(exe_path);
 
     var man = b.graph.cache.obtain();
     defer man.deinit();
 
-    // Random bytes to make TranslateC unique. Refresh this with new
-    // random bytes when TranslateC implementation is modified in a
-    // non-backwards-compatible way.
+    // Random bytes to make TranslateC outputs unique.
     man.hash.add(@as(u32, 0x2701BED2));
+    man.hash.addBytes(exe_path);
 
     if (!translate_c.target.query.isNative()) {
         const triple = try translate_c.target.query.zigTriple(b.allocator);
