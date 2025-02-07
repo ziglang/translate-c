@@ -5,7 +5,6 @@ int foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() c_int {
 //     var x: c_int = 1234;

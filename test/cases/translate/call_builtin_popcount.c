@@ -11,5 +11,5 @@ int max(int a) {
 // pub export fn max(arg_a: c_int) c_int {
 //     var a = arg_a;
 //     _ = &a;
-//     return __builtin_popcount(@as(c_uint, 1));
+//     return __builtin_popcount(1);
 // }

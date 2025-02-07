@@ -30,7 +30,7 @@ unsigned u() {
 //     c = a * b;
 //     c = @divTrunc(a, b);
 //     c = @import("std").zig.c_translation.signedRemainder(a, b);
-//     return 0;
+//     return undefined;
 // }
 // pub export fn u() c_uint {
 //     var a: c_uint = undefined;
@@ -44,5 +44,5 @@ unsigned u() {
 //     c = a *% b;
 //     c = a / b;
 //     c = a % b;
-//     return 0;
+//     return undefined;
 // }

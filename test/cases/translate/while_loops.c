@@ -42,5 +42,5 @@ int foo() {
 //     while (true) {
 //         a = 7;
 //     }
-//     return 0;
+//     return undefined;
 // }

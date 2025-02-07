@@ -3,7 +3,6 @@ int max(const int x, int y) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn max(x: c_int, arg_y: c_int) c_int {
 //     _ = &x;
