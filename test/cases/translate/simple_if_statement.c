@@ -11,7 +11,6 @@ int max(int a, int b) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn max(arg_a: c_int, arg_b: c_int) c_int {
 //     var a = arg_a;

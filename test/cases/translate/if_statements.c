@@ -8,7 +8,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     if (true) {
@@ -16,8 +15,8 @@ void foo() {
 //         _ = &a;
 //     }
 //     if ((blk: {
-//         _ = @as(c_int, 2);
-//         break :blk @as(c_int, 5);
+//         _ = 2;
+//         break :blk 5;
 //     }) != 0) {
 //         var a: c_int = 2;
 //         _ = &a;
