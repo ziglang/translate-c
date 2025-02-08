@@ -29,6 +29,6 @@ void foo(void) {
 //     _ = &g;
 //     var h: c_ushort = @bitCast(@as(c_short, @truncate(e)));
 //     _ = &h;
-//     const i: c_uint = 1;
+//     const i: c_uint = @bitCast(@as(c_int, @truncate(4294967297)));
 //     _ = &i;
 // }

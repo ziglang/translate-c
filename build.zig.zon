@@ -3,8 +3,8 @@
     .version = "0.14.0-dev.2179+f2b81f57f",
     .dependencies = .{
         .aro = .{
-            .url = "git+https://github.com/Vexu/arocc.git#21ef6e5ea520e2541012f9cc69787e46db0c77ab",
-            .hash = "12204be0c258fe11dd691ff4ca3e04b86bd7279402f3ed7cc5f06dad670875fc8ee4",
+            .url = "git+https://github.com/Vexu/arocc.git#c1ac1a38060701e70175117df8dbbfdd8b53710e",
+            .hash = "1220be64fdddc09f2b0301543481e3001c2e9fa58fb1b4550e7b1e5e0fdeb39643ad",
         },
     },
     .paths = .{

@@ -1417,10 +1417,11 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .cast => |cast| return t.transCastExpr(scope, cast, used),
         .decl_ref_expr => |decl_ref| try t.transDeclRefExpr(scope, decl_ref),
+        .enumeration_ref => |enum_ref| try t.transDeclRefExpr(scope, enum_ref),
         .addr_of_expr => |addr_of_expr| try ZigTag.address_of.create(t.arena, try t.transExpr(scope, addr_of_expr.operand, .used)),
         .deref_expr => |deref_expr| res: {
             if (t.typeWasDemotedToOpaque(qt))
-                return fail(t, error.UnsupportedTranslation, deref_expr.op_tok, "cannot dereference opaque type", .{});
+                return t.fail(error.UnsupportedTranslation, deref_expr.op_tok, "cannot dereference opaque type", .{});
 
             // Dereferencing a function pointer is a no-op.
             if (qt.is(t.comp, .func)) return t.transExpr(scope, deref_expr.operand, used);
@@ -1443,7 +1444,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             } else if (qt.isInt(t.comp) and operand_qt.signedness(t.comp) == .unsigned) {
                 // use -% x for unsigned integers
                 break :res try ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, negate_expr.operand, .used));
-            } else return fail(t, error.UnsupportedTranslation, negate_expr.op_tok, "C negation with non float non integer", .{});
+            } else return t.fail(error.UnsupportedTranslation, negate_expr.op_tok, "C negation with non float non integer", .{});
         },
         .div_expr => |div_expr| res: {
             if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
@@ -1523,10 +1524,8 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
         .assign_expr => |assign_expr| return t.transAssignExpr(scope, assign_expr, used),
 
-        .int_literal => res: {
-            const val = t.tree.value_map.get(expr).?;
-            break :res try t.transCreateNodeInt(val);
-        },
+        .int_literal => return t.transIntLiteral(scope, expr, used, .with_as),
+        .char_literal => return t.transCharLiteral(scope, expr, used, .with_as),
         .string_literal_expr => |literal| res: {
             const val = t.tree.value_map.get(expr).?;
             const str_qt = literal.qt;
@@ -1559,19 +1558,18 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 /// an `@as` would be redundant. This is used to prevent redundant `@as` in integer literals.
 fn transExprCoercing(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) TransError!ZigNode {
     switch (expr.get(t.tree)) {
+        .int_literal => return t.transIntLiteral(scope, expr, used, .no_as),
+        .char_literal => return t.transCharLiteral(scope, expr, used, .no_as),
         .cast => |cast| {
             if (cast.implicit) {
                 switch (cast.kind) {
                     .int_to_float => return t.transExprCoercing(scope, cast.operand, used),
                     .int_cast => {
-                        if (t.tree.value_map.get(expr)) |val| {
+                        if (t.tree.value_map.get(cast.operand)) |val| {
                             const max_int = try aro.Value.maxInt(cast.qt, t.comp);
 
-                            // TODO: chars should return operand_expr
-                            //const operand_expr = try t.transExprCoercing(scope, cast.operand);
-
                             if (val.compare(.lte, max_int, t.comp)) {
-                                return try t.transCreateNodeInt(val);
+                                return t.transExprCoercing(scope, cast.operand, used);
                             }
                         }
                     },
@@ -1947,6 +1945,66 @@ fn transBuiltinCall(
     return t.maybeSuppressResult(used, res);
 }
 
+const SuppressCast = enum { with_as, no_as };
+
+fn transIntLiteral(
+    t: *Translator,
+    scope: *Scope,
+    literal_index: Node.Index,
+    used: ResultUsed,
+    suppress_as: SuppressCast,
+) TransError!ZigNode {
+    const val = t.tree.value_map.get(literal_index).?;
+    const int_lit_node = try t.transCreateNodeInt(val);
+    if (suppress_as == .no_as) {
+        return t.maybeSuppressResult(used, int_lit_node);
+    }
+
+    // Integer literals in C have types, and this can matter for several reasons.
+    // For example, this is valid C:
+    //     unsigned char y = 256;
+    // How this gets evaluated is the 256 is an integer, which gets truncated to signed char, then bit-casted
+    // to unsigned char, resulting in 0. In order for this to work, we have to emit this zig code:
+    //     var y = @as(u8, @bitCast(@as(i8, @truncate(@as(c_int, 256)))));
+
+    // @as(T, x)
+    const ty_node = try t.transType(scope, literal_index.qt(t.tree), literal_index.tok(t.tree));
+    const as = try ZigTag.as.create(t.arena, .{ .lhs = ty_node, .rhs = int_lit_node });
+    return t.maybeSuppressResult(used, as);
+}
+
+fn transCharLiteral(
+    t: *Translator,
+    scope: *Scope,
+    literal_index: Node.Index,
+    used: ResultUsed,
+    suppress_as: SuppressCast,
+) TransError!ZigNode {
+    const val = t.tree.value_map.get(literal_index).?;
+    const char_literal = literal_index.get(t.tree).char_literal;
+    const narrow = char_literal.kind == .ascii or char_literal.kind == .utf8;
+
+    // C has a somewhat obscure feature called multi-character character constant
+    // e.g. 'abcd'
+    const int_value = val.toInt(u32, t.comp).?;
+    const int_lit_node = if (char_literal.kind == .ascii and int_value > 255)
+        try t.transCreateNodeNumber(int_value, .int)
+    else
+        try t.transCreateCharLitNode(narrow, int_value);
+
+    if (suppress_as == .no_as) {
+        return t.maybeSuppressResult(used, int_lit_node);
+    }
+
+    // See comment in `transIntLiteral` for why this code is here.
+    // @as(T, x)
+    const as_node = try ZigTag.as.create(t.arena, .{
+        .lhs = try t.transType(scope, char_literal.qt, char_literal.literal_tok),
+        .rhs = int_lit_node,
+    });
+    return t.maybeSuppressResult(used, as_node);
+}
+
 // =====================
 // Node creation helpers
 // =====================
@@ -1963,6 +2021,25 @@ fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     const res = try ZigTag.integer_literal.create(t.arena, str);
     if (is_negative) return ZigTag.negate.create(t.arena, res);
     return res;
+}
+
+fn transCreateNodeNumber(t: *Translator, num: anytype, num_kind: enum { int, float }) !ZigNode {
+    const fmt_s = switch (@typeInfo(@TypeOf(num))) {
+        .int, .comptime_int => "{d}",
+        else => "{s}",
+    };
+    const str = try std.fmt.allocPrint(t.arena, fmt_s, .{num});
+    if (num_kind == .float)
+        return ZigTag.float_literal.create(t.arena, str)
+    else
+        return ZigTag.integer_literal.create(t.arena, str);
+}
+
+fn transCreateCharLitNode(t: *Translator, narrow: bool, val: u32) TransError!ZigNode {
+    return ZigTag.char_literal.create(t.arena, if (narrow)
+        try std.fmt.allocPrint(t.arena, "'{'}'", .{std.zig.fmtEscapes(&.{@as(u8, @intCast(val))})})
+    else
+        try std.fmt.allocPrint(t.arena, "'\\u{{{x}}}'", .{val}));
 }
 
 fn transCreateNodeInfixOp(

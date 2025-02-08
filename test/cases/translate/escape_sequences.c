@@ -15,7 +15,6 @@ char a = '\'',
 
 
 // translate
-// expect=fail
 //
 // pub export fn escapes() [*c]const u8 {
 //     var a: u8 = '\'';
