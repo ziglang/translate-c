@@ -1156,6 +1156,10 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .null_stmt => return ZigTag.empty_block.init(),
         .if_stmt => |if_stmt| return t.transIfStmt(scope, if_stmt),
         .while_stmt => |while_stmt| return t.transWhileStmt(scope, while_stmt),
+        .do_while_stmt => |do_while_stmt| return t.transDoWhileStmt(scope, do_while_stmt),
+        .for_stmt => |for_stmt| return t.transForStmt(scope, for_stmt),
+        .continue_stmt => return ZigTag.@"continue".init(),
+        .break_stmt => return ZigTag.@"break".init(),
         .variable => {
             try t.transDecl(scope, stmt);
             return ZigTag.declaration.init();
@@ -1264,7 +1268,7 @@ fn transIfStmt(t: *Translator, scope: *Scope, if_stmt: Node.IfStmt) TransError!Z
 }
 
 fn transWhileStmt(t: *Translator, scope: *Scope, while_stmt: Node.WhileStmt) TransError!ZigNode {
-    var cond_scope = Scope.Condition{
+    var cond_scope: Scope.Condition = .{
         .base = .{
             .parent = scope,
             .id = .condition,
@@ -1273,12 +1277,122 @@ fn transWhileStmt(t: *Translator, scope: *Scope, while_stmt: Node.WhileStmt) Tra
     defer cond_scope.deinit();
     const cond = try t.transBoolExpr(&cond_scope.base, while_stmt.cond);
 
-    var loop_scope = Scope{
+    var loop_scope: Scope = .{
         .parent = scope,
         .id = .loop,
     };
     const body = try t.maybeBlockify(&loop_scope, while_stmt.body);
     return ZigTag.@"while".create(t.arena, .{ .cond = cond, .body = body, .cont_expr = null });
+}
+
+fn transDoWhileStmt(t: *Translator, scope: *Scope, do_stmt: Node.DoWhileStmt) TransError!ZigNode {
+    var loop_scope: Scope = .{
+        .parent = scope,
+        .id = .do_loop,
+    };
+
+    // if (!cond) break;
+    var cond_scope: Scope.Condition = .{
+        .base = .{
+            .parent = scope,
+            .id = .condition,
+        },
+    };
+    defer cond_scope.deinit();
+    const cond = try t.transBoolExpr(&cond_scope.base, do_stmt.cond);
+    const if_not_break = switch (cond.tag()) {
+        .true_literal => {
+            const body_node = try t.maybeBlockify(scope, do_stmt.body);
+            return ZigTag.while_true.create(t.arena, body_node);
+        },
+        else => try ZigTag.if_not_break.create(t.arena, cond),
+    };
+
+    var body_node = try t.transStmt(&loop_scope, do_stmt.body);
+    if (body_node.isNoreturn(true)) {
+        // The body node ends in a noreturn statement. Simply put it in a while (true)
+        // in case it contains breaks or continues.
+    } else if (do_stmt.body.get(t.tree) == .compound_stmt) {
+        // there's already a block in C, so we'll append our condition to it.
+        // c: do {
+        // c:   a;
+        // c:   b;
+        // c: } while(c);
+        // zig: while (true) {
+        // zig:   a;
+        // zig:   b;
+        // zig:   if (!cond) break;
+        // zig: }
+        const block = body_node.castTag(.block).?;
+        block.data.stmts.len += 1; // This is safe since we reserve one extra space in Scope.Block.complete.
+        block.data.stmts[block.data.stmts.len - 1] = if_not_break;
+    } else {
+        // the C statement is without a block, so we need to create a block to contain it.
+        // c: do
+        // c:   a;
+        // c: while(c);
+        // zig: while (true) {
+        // zig:   a;
+        // zig:   if (!cond) break;
+        // zig: }
+        const statements = try t.arena.alloc(ZigNode, 2);
+        statements[0] = body_node;
+        statements[1] = if_not_break;
+        body_node = try ZigTag.block.create(t.arena, .{ .label = null, .stmts = statements });
+    }
+    return ZigTag.while_true.create(t.arena, body_node);
+}
+
+fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransError!ZigNode {
+    var loop_scope: Scope = .{
+        .parent = scope,
+        .id = .loop,
+    };
+
+    var block_scope: ?Scope.Block = null;
+    defer if (block_scope) |*bs| bs.deinit();
+
+    switch (for_stmt.init) {
+        .decls => |decls| {
+            block_scope = try Scope.Block.init(t, scope, false);
+            loop_scope.parent = &block_scope.?.base;
+            for (decls) |decl| {
+                try t.transDecl(&block_scope.?.base, decl);
+            }
+        },
+        .expr => |maybe_init| if (maybe_init) |init| {
+            block_scope = try Scope.Block.init(t, scope, false);
+            loop_scope.parent = &block_scope.?.base;
+            const init_node = try t.transStmt(&block_scope.?.base, init);
+            try block_scope.?.statements.append(t.gpa, init_node);
+        },
+    }
+    var cond_scope: Scope.Condition = .{
+        .base = .{
+            .parent = &loop_scope,
+            .id = .condition,
+        },
+    };
+    defer cond_scope.deinit();
+
+    const cond = if (for_stmt.cond) |cond|
+        try t.transBoolExpr(&cond_scope.base, cond)
+    else
+        ZigTag.true_literal.init();
+
+    const cont_expr = if (for_stmt.incr) |incr|
+        try t.transExpr(&cond_scope.base, incr, .unused)
+    else
+        null;
+
+    const body = try t.maybeBlockify(&loop_scope, for_stmt.body);
+    const while_node = try ZigTag.@"while".create(t.arena, .{ .cond = cond, .body = body, .cont_expr = cont_expr });
+    if (block_scope) |*bs| {
+        try bs.statements.append(t.gpa, while_node);
+        return try bs.complete();
+    } else {
+        return while_node;
+    }
 }
 
 // ======================

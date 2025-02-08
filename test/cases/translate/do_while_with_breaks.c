@@ -20,7 +20,6 @@ void foo(int a) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo(arg_a: c_int) void {
 //     var a = arg_a;
