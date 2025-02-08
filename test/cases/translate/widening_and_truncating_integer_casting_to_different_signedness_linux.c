@@ -6,13 +6,13 @@ unsigned short bar(long x) {
 }
 
 // translate
-// expect=fail
+// target=native-linux
 //
 // pub export fn foo() c_ulong {
-//     return @as(c_ulong, @bitCast(@as(c_long, -@as(c_int, 1))));
+//     return 18446744073709551615;
 // }
 // pub export fn bar(arg_x: c_long) c_ushort {
 //     var x = arg_x;
 //     _ = &x;
-//     return @as(c_ushort, @bitCast(@as(c_short, @truncate(x))));
+//     return @bitCast(@as(c_short, @truncate(x)));
 // }
