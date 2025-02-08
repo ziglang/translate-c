@@ -17,7 +17,6 @@ int foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() c_int {
 //     var a: c_int = 5;
@@ -30,7 +29,7 @@ int foo() {
 //         _ = &a_1;
 //         a_1 = 9;
 //         return blk: {
-//             _ = @as(c_int, 6);
+//             _ = 6;
 //             break :blk a_1;
 //         };
 //     }

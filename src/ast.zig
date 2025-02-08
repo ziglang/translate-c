@@ -449,7 +449,7 @@ pub const Node = extern union {
 
     pub fn tag(self: Node) Tag {
         if (self.tag_if_small_enough < Tag.no_payload_count) {
-            return @as(Tag, @enumFromInt(@as(std.meta.Tag(Tag), @intCast(self.tag_if_small_enough))));
+            return @enumFromInt(@as(std.meta.Tag(Tag), @intCast(self.tag_if_small_enough)));
         } else {
             return self.ptr_otherwise.tag;
         }
@@ -898,10 +898,10 @@ const Context = struct {
 
         try c.tokens.append(c.gpa, .{
             .tag = tag,
-            .start = @as(u32, @intCast(start_index)),
+            .start = @intCast(start_index),
         });
 
-        return @as(u32, @intCast(c.tokens.len - 1));
+        return @intCast(c.tokens.len - 1);
     }
 
     fn addToken(c: *Context, tag: TokenTag, bytes: []const u8) Allocator.Error!TokenIndex {
@@ -916,14 +916,14 @@ const Context = struct {
 
     fn listToSpan(c: *Context, list: []const NodeIndex) Allocator.Error!NodeSubRange {
         try c.extra_data.appendSlice(c.gpa, list);
-        return NodeSubRange{
-            .start = @as(NodeIndex, @intCast(c.extra_data.items.len - list.len)),
-            .end = @as(NodeIndex, @intCast(c.extra_data.items.len)),
+        return .{
+            .start = @intCast(c.extra_data.items.len - list.len),
+            .end = @intCast(c.extra_data.items.len),
         };
     }
 
     fn addNode(c: *Context, elem: std.zig.Ast.Node) Allocator.Error!NodeIndex {
-        const result = @as(NodeIndex, @intCast(c.nodes.len));
+        const result: NodeIndex = @intCast(c.nodes.len);
         try c.nodes.append(c.gpa, elem);
         return result;
     }
@@ -961,7 +961,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             try c.buf.append('\n');
             try c.buf.appendSlice(payload);
             try c.buf.append('\n');
-            return @as(NodeIndex, 0); // error: integer value 0 cannot be coerced to type 'std.mem.Allocator.Error!u32'
+            return 0;
         },
         .helpers_cast => {
             const payload = node.castTag(.helpers_cast).?.data;
@@ -1743,6 +1743,14 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             const l_brace = try c.addToken(.l_brace, "{");
 
             const stmt = try renderNode(c, payload);
+            if (stmt == 0) {
+                _ = try c.addToken(.r_brace, "}");
+                return c.addNode(.{
+                    .tag = .block_two,
+                    .main_token = l_brace,
+                    .data = .{ .lhs = 0, .rhs = 0 },
+                });
+            }
             try addSemicolonIfNeeded(c, payload);
 
             _ = try c.addToken(.r_brace, "}");
@@ -1788,7 +1796,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .pub_inline_fn => return renderMacroFunc(c, node),
         .discard => {
             const payload = node.castTag(.discard).?.data;
-            if (payload.should_skip) return @as(NodeIndex, 0);
+            if (payload.should_skip) return 0;
 
             const lhs = try c.addNode(.{
                 .tag = .identifier,

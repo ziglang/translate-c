@@ -5,7 +5,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     while (false) while (false) {};

@@ -324,13 +324,11 @@ fn transTypeDef(t: *Translator, scope: *Scope, typedef_decl: Node.Typedef) Error
         try t.addTopLevelDecl(name, node);
     } else {
         try scope.appendNode(node);
-        if (node.tag() != .pub_var_simple) {
-            try bs.discardVariable(name);
-        }
+        try bs.discardVariable(name);
     }
 }
 
-fn mangleWeakGlobalName(t: *Translator, want_name: []const u8) ![]const u8 {
+fn mangleWeakGlobalName(t: *Translator, want_name: []const u8) Error![]const u8 {
     var cur_name = want_name;
 
     if (!t.weak_global_names.contains(want_name)) {
@@ -494,9 +492,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
     } else {
         try scope.appendNode(node);
-        if (node.tag() != .pub_var_simple) {
-            try bs.discardVariable(name);
-        }
+        try bs.discardVariable(name);
     }
 }
 
@@ -593,9 +589,10 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
 }
 
 fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!void {
-    const name = t.tree.tokSlice(variable.name_tok);
+    var name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
+    if (!toplevel) name = try bs.makeMangledName(name);
 
     const type_node = t.transType(scope, variable.qt, variable.name_tok) catch |err| switch (err) {
         error.UnsupportedType => {
@@ -636,10 +633,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         try t.addTopLevelDecl(name, node);
     } else {
         try scope.appendNode(node);
-        // TODO: are more checks need here?
-        if (node.tag() != .pub_var_simple) {
-            try bs.discardVariable(name);
-        }
+        try bs.discardVariable(name);
     }
 }
 
@@ -722,9 +716,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType, field_nodes: 
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
     } else {
         try scope.appendNode(node);
-        if (node.tag() != .pub_var_simple) {
-            try bs.discardVariable(name);
-        }
+        try bs.discardVariable(name);
     }
 }
 
@@ -1160,8 +1152,25 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .for_stmt => |for_stmt| return t.transForStmt(scope, for_stmt),
         .continue_stmt => return ZigTag.@"continue".init(),
         .break_stmt => return ZigTag.@"break".init(),
-        .variable => {
-            try t.transDecl(scope, stmt);
+        .typedef => |typedef_decl| {
+            assert(!typedef_decl.implicit);
+            try t.transTypeDef(scope, typedef_decl);
+            return ZigTag.declaration.init();
+        },
+        .struct_decl, .union_decl => |record_decl| {
+            try t.transRecordDecl(scope, record_decl.container_qt);
+            return ZigTag.declaration.init();
+        },
+        .enum_decl => |enum_decl| {
+            try t.transEnumDecl(scope, enum_decl.container_qt, enum_decl.fields, enum_decl.name_or_kind_tok);
+            return ZigTag.declaration.init();
+        },
+        .fn_proto => {
+            try t.transFnDecl(stmt, true);
+            return ZigTag.declaration.init();
+        },
+        .variable => |variable| {
+            try t.transVarDecl(scope, variable);
             return ZigTag.declaration.init();
         },
         else => return t.transExprCoercing(scope, stmt, .unused),
@@ -1353,7 +1362,8 @@ fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransErro
     defer if (block_scope) |*bs| bs.deinit();
 
     switch (for_stmt.init) {
-        .decls => |decls| {
+        // TODO decls.len should always be > 1
+        .decls => |decls| if (decls.len > 1) {
             block_scope = try Scope.Block.init(t, scope, false);
             loop_scope.parent = &block_scope.?.base;
             for (decls) |decl| {
@@ -1363,8 +1373,8 @@ fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransErro
         .expr => |maybe_init| if (maybe_init) |init| {
             block_scope = try Scope.Block.init(t, scope, false);
             loop_scope.parent = &block_scope.?.base;
-            const init_node = try t.transStmt(&block_scope.?.base, init);
-            try block_scope.?.statements.append(t.gpa, init_node);
+            const init_node = try t.transStmt(&loop_scope, init);
+            try loop_scope.appendNode(init_node);
         },
     }
     var cond_scope: Scope.Condition = .{

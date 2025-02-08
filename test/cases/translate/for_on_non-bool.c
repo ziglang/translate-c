@@ -9,7 +9,6 @@ int for_none_bool() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn for_none_bool() c_int {
 //     var a: c_int = undefined;
