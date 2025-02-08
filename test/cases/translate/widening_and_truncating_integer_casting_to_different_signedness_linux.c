@@ -6,6 +6,7 @@ unsigned short bar(long x) {
 }
 
 // translate
+// target=native-linux
 //
 // pub export fn foo() c_ulong {
 //     return 18446744073709551615;
