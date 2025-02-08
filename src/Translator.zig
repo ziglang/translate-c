@@ -1816,7 +1816,33 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
         return t.transCreateNodeInfixOp(.assign, lhs, rhs);
     }
 
-    return t.fail(error.UnsupportedTranslation, bin.op_tok, "TODO implement translation of .used assignment", .{});
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    const tmp = try block_scope.reserveMangledName("tmp");
+
+    var rhs = try t.transExprCoercing(&block_scope.base, bin.rhs, .used);
+    const lhs_qt = bin.lhs.qt(t.tree);
+    if (rhs.isBoolRes() and !lhs_qt.is(t.comp, .bool)) {
+        rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
+    }
+
+    const tmp_decl = try ZigTag.var_simple.create(t.arena, .{ .name = tmp, .init = rhs });
+    try block_scope.statements.append(t.gpa, tmp_decl);
+
+    const lhs = try t.transExprCoercing(&block_scope.base, bin.lhs, .used);
+    const tmp_ident = try ZigTag.identifier.create(t.arena, tmp);
+
+    const assign = try t.transCreateNodeInfixOp(.assign, lhs, tmp_ident);
+    try block_scope.statements.append(t.gpa, assign);
+
+    const break_node = try ZigTag.break_val.create(t.arena, .{
+        .label = block_scope.label,
+        .val = tmp_ident,
+    });
+    try block_scope.statements.append(t.gpa, break_node);
+
+    return try block_scope.complete();
 }
 
 fn transPtrDiffExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!ZigNode {

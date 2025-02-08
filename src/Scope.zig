@@ -122,7 +122,7 @@ pub const Block = struct {
     /// Given the desired name, return a name that does not shadow anything from outer scopes.
     /// Inserts the returned name into the scope.
     /// The name will not be visible to callers of getAlias.
-    fn reserveMangledName(block: *Block, name: []const u8) ![]const u8 {
+    pub fn reserveMangledName(block: *Block, name: []const u8) ![]const u8 {
         return block.createMangledName(name, true);
     }
 

@@ -4,7 +4,6 @@ void max(int a) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn max(arg_a: c_int) void {
 //     var a = arg_a;
