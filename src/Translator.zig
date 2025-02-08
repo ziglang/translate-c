@@ -1196,7 +1196,7 @@ fn transReturnStmt(t: *Translator, scope: *Scope, return_stmt: Node.ReturnStmt) 
             if (zero) return ZigTag.@"return".create(t.arena, ZigTag.zero_literal.init());
 
             const return_qt = scope.findBlockReturnType();
-            if (return_qt.type(t.comp) == .void) return ZigTag.empty_block.init();
+            if (return_qt.is(t.comp, .void)) return ZigTag.empty_block.init();
 
             return ZigTag.@"return".create(t.arena, ZigTag.undefined_literal.init());
         },
@@ -1395,9 +1395,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
 
-        .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr),
-        .comma_expr => |comma_expr| try t.transCommaExpr(scope, comma_expr),
-        .assign_expr => |assign_expr| return try t.transAssignExpr(scope, used, assign_expr),
+        .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
+        .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
+        .assign_expr => |assign_expr| return t.transAssignExpr(scope, assign_expr, used),
 
         .int_literal => res: {
             const val = t.tree.value_map.get(expr).?;
@@ -1629,7 +1629,10 @@ fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag
     return t.transCreateNodeInfixOp(op_id, lhs, rhs_casted);
 }
 
-fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional) TransError!ZigNode {
+fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, used: ResultUsed) TransError!ZigNode {
+    // Conditional operator branches are implicitly casted to void when not used.
+    if (used == .unused) assert(cond_expr.qt.is(t.comp, .void));
+
     var cond_scope: Scope.Condition = .{
         .base = .{
             .parent = scope,
@@ -1652,7 +1655,14 @@ fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional) Tra
     return ZigTag.@"if".create(t.arena, .{ .cond = cond, .then = then_body, .@"else" = else_body });
 }
 
-fn transCommaExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!ZigNode {
+fn transCommaExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: ResultUsed) TransError!ZigNode {
+    if (used == .unused) {
+        const lhs = try t.transExprCoercing(scope, bin.lhs, .unused);
+        try scope.appendNode(lhs);
+        const rhs = try t.transExprCoercing(scope, bin.rhs, .unused);
+        return rhs;
+    }
+
     var block_scope = try Scope.Block.init(t, scope, true);
     defer block_scope.deinit();
 
@@ -1669,7 +1679,7 @@ fn transCommaExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!Zi
     return try block_scope.complete();
 }
 
-fn transAssignExpr(t: *Translator, scope: *Scope, used: ResultUsed, bin: Node.Binary) !ZigNode {
+fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: ResultUsed) !ZigNode {
     if (used == .unused) {
         const lhs = try t.transExpr(scope, bin.lhs, .used);
         var rhs = try t.transExprCoercing(scope, bin.rhs, .used);

@@ -4,18 +4,13 @@ int foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() c_int {
-//     _ = blk: {
-//         _ = @as(c_int, 2);
-//         break :blk @as(c_int, 4);
-//     };
+//     _ = 2;
+//     _ = 4;
 //     return blk: {
-//         _ = blk_1: {
-//             _ = @as(c_int, 2);
-//             break :blk_1 @as(c_int, 4);
-//         };
-//         break :blk @as(c_int, 6);
+//         _ = 2;
+//         _ = 4;
+//         break :blk 6;
 //     };
 // }
