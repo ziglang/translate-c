@@ -5,7 +5,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 // target=native-windows-msvc
 //
 // pub export fn foo() void {

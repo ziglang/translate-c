@@ -8,7 +8,6 @@ int if_none_bool(int a, float b, void *c, enum SomeEnum d) {
 }
 
 // translate
-// expect=fail
 // target=native-linux
 //
 // pub const A: c_int = 0;

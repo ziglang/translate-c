@@ -36,8 +36,8 @@ global_scope: *Scope.Root,
 /// Running number used for creating new unique identifiers.
 mangle_count: u32 = 0,
 
-/// Table of declarations for enum, struct and union types.
-container_decls: std.AutoArrayHashMapUnmanaged(QualType, []const u8) = .empty,
+/// Table of declarations for enum, struct, union and typedef types.
+type_decls: std.AutoArrayHashMapUnmanaged(Node.Index, []const u8) = .empty,
 /// Table of record decls that have been demoted to opaques.
 opaque_demotes: std.AutoHashMapUnmanaged(QualType, void) = .empty,
 /// Table of unnamed enums and records that are child types of typedefs.
@@ -147,7 +147,7 @@ pub fn translate(
     };
     translator.global_scope.* = Scope.Root.init(&translator);
     defer {
-        translator.container_decls.deinit(gpa);
+        translator.type_decls.deinit(gpa);
         translator.alias_list.deinit(gpa);
         translator.global_names.deinit(gpa);
         translator.weak_global_names.deinit(gpa);
@@ -258,7 +258,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
         .typedef => |typedef_decl| {
             // Implicit typedefs are translated only if referenced.
             if (typedef_decl.implicit) return;
-            try t.transTypeDef(scope, typedef_decl);
+            try t.transTypeDef(scope, decl);
         },
 
         .struct_decl, .union_decl => |record_decl| {
@@ -266,7 +266,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
         },
 
         .enum_decl => |enum_decl| {
-            try t.transEnumDecl(scope, enum_decl.container_qt, enum_decl.fields, enum_decl.name_or_kind_tok);
+            try t.transEnumDecl(scope, enum_decl.container_qt);
         },
 
         .enum_field,
@@ -291,8 +291,25 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
     }
 }
 
-fn transTypeDef(t: *Translator, scope: *Scope, typedef_decl: Node.Typedef) Error!void {
-    // TODO avoid repeatedly translating typedef declarations.
+const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "uint8_t", "u8" },
+    .{ "int8_t", "i8" },
+    .{ "uint16_t", "u16" },
+    .{ "int16_t", "i16" },
+    .{ "uint32_t", "u32" },
+    .{ "int32_t", "i32" },
+    .{ "uint64_t", "u64" },
+    .{ "int64_t", "i64" },
+    .{ "intptr_t", "isize" },
+    .{ "uintptr_t", "usize" },
+    .{ "ssize_t", "isize" },
+    .{ "size_t", "usize" },
+});
+
+fn transTypeDef(t: *Translator, scope: *Scope, typedef_node: Node.Index) Error!void {
+    const typedef_decl = typedef_node.get(t.tree).typedef;
+    if (t.type_decls.get(typedef_node)) |_|
+        return; // Avoid processing this decl twice
 
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
@@ -300,7 +317,11 @@ fn transTypeDef(t: *Translator, scope: *Scope, typedef_decl: Node.Typedef) Error
     var name: []const u8 = t.tree.tokSlice(typedef_decl.name_tok);
     try t.typedefs.put(t.gpa, name, {});
 
+    if (builtin_typedef_map.get(name)) |builtin| {
+        return t.type_decls.putNoClobber(t.gpa, typedef_node, builtin);
+    }
     if (!toplevel) name = try bs.makeMangledName(name);
+    try t.type_decls.putNoClobber(t.gpa, typedef_node, name);
 
     const typedef_loc = typedef_decl.name_tok;
     const init_node = t.transType(scope, typedef_decl.qt, typedef_loc) catch |err| switch (err) {
@@ -345,7 +366,12 @@ fn mangleWeakGlobalName(t: *Translator, want_name: []const u8) Error![]const u8 
 
 fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!void {
     const base = record_qt.base(t.comp);
-    if (t.container_decls.get(base.qt)) |_|
+    const record_ty = switch (base.type) {
+        .@"struct", .@"union" => |record_ty| record_ty,
+        else => unreachable,
+    };
+
+    if (t.type_decls.get(record_ty.decl_node)) |_|
         return; // Avoid processing this decl twice
 
     const toplevel = scope.id == .root;
@@ -353,11 +379,6 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
 
     const container_kind: ZigTag = if (base.type == .@"union") .@"union" else .@"struct";
     const container_kind_name = @tagName(container_kind);
-
-    const record_ty = switch (base.type) {
-        .@"struct", .@"union" => |record_ty| record_ty,
-        else => unreachable,
-    };
 
     var bare_name = record_ty.name.lookup(t.comp);
     const is_unnamed = bare_name[0] == '(';
@@ -376,7 +397,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         }
     }
     if (!toplevel) name = try bs.makeMangledName(name);
-    try t.container_decls.putNoClobber(t.gpa, base.qt, name);
+    try t.type_decls.putNoClobber(t.gpa, record_ty.decl_node, name);
 
     const is_pub = toplevel and !is_unnamed;
     const init_node = init: {
@@ -637,15 +658,15 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     }
 }
 
-fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType, field_nodes: []const Node.Index, source_loc: TokenIndex) Error!void {
+fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
     const base = enum_qt.base(t.comp);
-    if (t.container_decls.get(base.qt)) |_|
+    const enum_ty = base.type.@"enum";
+
+    if (t.type_decls.get(enum_ty.decl_node)) |_|
         return; // Avoid processing this decl twice
 
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
-
-    const enum_ty = base.type.@"enum";
 
     var bare_name = enum_ty.name.lookup(t.comp);
     const is_unnamed = bare_name[0] == '(';
@@ -660,10 +681,11 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType, field_nodes: 
         name = try std.fmt.allocPrint(t.arena, "enum_{s}", .{bare_name});
     }
     if (!toplevel) name = try bs.makeMangledName(name);
-    try t.container_decls.putNoClobber(t.gpa, base.qt, name);
+    try t.type_decls.putNoClobber(t.gpa, enum_ty.decl_node, name);
 
     const enum_type_node = if (!base.qt.hasIncompleteSize(t.comp)) blk: {
-        for (enum_ty.fields, field_nodes) |field, field_node| {
+        const enum_decl = enum_ty.decl_node.get(t.tree).enum_decl;
+        for (enum_ty.fields, enum_decl.fields) |field, field_node| {
             var enum_val_name = field.name.lookup(t.comp);
             if (!toplevel) {
                 enum_val_name = try bs.makeMangledName(enum_val_name);
@@ -689,9 +711,9 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType, field_nodes: 
             }
         }
 
-        break :blk t.transType(scope, enum_ty.tag, source_loc) catch |err| switch (err) {
+        break :blk t.transType(scope, enum_ty.tag.?, enum_decl.name_or_kind_tok) catch |err| switch (err) {
             error.UnsupportedType => {
-                return t.failDecl(source_loc, name, "unable to translate enum integer type", .{});
+                return t.failDecl(enum_decl.name_or_kind_tok, name, "unable to translate enum integer type", .{});
             },
             else => |e| return e,
         };
@@ -838,10 +860,29 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
                 if (t.weak_global_names.contains(record_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }
             try t.transRecordDecl(trans_scope, qt);
-            const name = t.container_decls.get(qt.base(t.comp).qt).?;
+            const name = t.type_decls.get(record_ty.decl_node).?;
             return ZigTag.identifier.create(t.arena, name);
         },
-        // .typedef,
+        .@"enum" => |enum_ty| {
+            var trans_scope = scope;
+            const is_anonymous = enum_ty.name.lookup(t.comp)[0] == '(';
+            if (is_anonymous) {
+                if (t.weak_global_names.contains(enum_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
+            }
+            try t.transEnumDecl(trans_scope, qt);
+            const name = t.type_decls.get(enum_ty.decl_node).?;
+            return ZigTag.identifier.create(t.arena, name);
+        },
+        .typedef => |typedef_ty| {
+            var trans_scope = scope;
+            const typedef_name = typedef_ty.name.lookup(t.comp);
+            if (builtin_typedef_map.get(typedef_name)) |builtin| return ZigTag.type.create(t.arena, builtin);
+            if (t.global_names.contains(typedef_name)) trans_scope = &t.global_scope.base;
+
+            try t.transTypeDef(trans_scope, typedef_ty.decl_node);
+            const name = t.type_decls.get(typedef_ty.decl_node).?;
+            return ZigTag.identifier.create(t.arena, name);
+        },
         // .attributed,
         // .typeof,
         else => return t.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{try t.getTypeStr(qt)}),
@@ -1154,7 +1195,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .break_stmt => return ZigTag.@"break".init(),
         .typedef => |typedef_decl| {
             assert(!typedef_decl.implicit);
-            try t.transTypeDef(scope, typedef_decl);
+            try t.transTypeDef(scope, stmt);
             return ZigTag.declaration.init();
         },
         .struct_decl, .union_decl => |record_decl| {
@@ -1162,7 +1203,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             return ZigTag.declaration.init();
         },
         .enum_decl => |enum_decl| {
-            try t.transEnumDecl(scope, enum_decl.container_qt, enum_decl.fields, enum_decl.name_or_kind_tok);
+            try t.transEnumDecl(scope, enum_decl.container_qt);
             return ZigTag.declaration.init();
         },
         .fn_proto => {

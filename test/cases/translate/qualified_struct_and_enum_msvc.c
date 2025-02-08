@@ -10,7 +10,6 @@ void func(struct Foo *a, enum Bar **b);
 
 // translate
 // target=x86_64-windows-msvc
-// expect=fail
 //
 // pub const struct_Foo = extern struct {
 //     x: c_int = @import("std").mem.zeroes(c_int),
