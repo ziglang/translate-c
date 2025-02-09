@@ -542,6 +542,16 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
         .is_extern = !has_body,
         .is_export = !is_export_or_inline and has_body and !is_always_inline,
         .is_pub = is_pub,
+        .cc = if (raw_qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
+            .C => .c,
+            .stdcall => .x86_stdcall,
+            .thiscall => .x86_thiscall,
+            .vectorcall => switch (t.comp.target.cpu.arch) {
+                .x86 => .x86_vectorcall,
+                .aarch64, .aarch64_be => .aarch64_vfabi,
+                else => .c,
+            },
+        } else .c,
     };
 
     const proto_node = t.transFnType(&t.global_scope.base, raw_qt, func_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
@@ -561,9 +571,6 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
     var block_scope = try Scope.Block.init(t, &t.global_scope.base, false);
     block_scope.return_type = func_ty.return_type;
     defer block_scope.deinit();
-
-    var scope = &block_scope.base;
-    _ = &scope;
 
     var param_id: c_uint = 0;
     for (proto_payload.data.params, func_ty.params) |*param, param_info| {
@@ -1056,6 +1063,7 @@ const FnProtoContext = struct {
     is_extern: bool = false,
     is_always_inline: bool = false,
     fn_name: ?[]const u8 = null,
+    cc: ast.Payload.Func.CallingConvention = .c,
 };
 
 fn transFnType(
@@ -1095,8 +1103,7 @@ fn transFnType(
 
     const alignment: ?c_uint = func_qt.requestedAlignment(t.comp) orelse null;
 
-    const explicit_callconv = null;
-    // const explicit_callconv = if ((ctx.is_inline or ctx.is_export or ctx.is_extern) and ctx.cc == .C) null else ctx.cc;
+    const explicit_callconv = if ((ctx.is_always_inline or ctx.is_export or ctx.is_extern) and ctx.cc == .c) null else ctx.cc;
 
     const return_type_node = blk: {
         if (func_qt.getAttribute(t.comp, .noreturn) != null) {

@@ -4,7 +4,6 @@ static void foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub fn foo() callconv(.c) void {
 //     if (true) while (true) {
