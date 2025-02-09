@@ -4,7 +4,6 @@ void foo(int bar) {
 int bar = 4;
 
 // translate
-// expect=fail
 //
 // pub export fn foo(arg_bar_1: c_int) void {
 //     var bar_1 = arg_bar_1;

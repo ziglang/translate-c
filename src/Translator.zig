@@ -110,6 +110,7 @@ fn fail(
     return err;
 }
 
+// TODO audit usages, not valid in function scope
 fn failDecl(t: *Translator, loc: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
     // location
     // pub const name = @compileError(msg);
@@ -613,7 +614,21 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     var name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
-    if (!toplevel) name = try bs.makeMangledName(name);
+    if (!toplevel) {
+        if (variable.storage_class == .@"extern") {
+            // Special naming convention for local extern variable wrapper struct
+            name = try std.fmt.allocPrint(t.arena, "{s}_{s}", .{ Scope.Block.extern_inner_prepend, name });
+        }
+        name = try bs.makeMangledName(name);
+    }
+
+    if (t.typeWasDemotedToOpaque(variable.qt)) {
+        if (variable.storage_class != .@"extern") {
+            return t.failDecl(variable.name_tok, name, "non-extern variable has opaque type", .{});
+        } else {
+            return t.failDecl(variable.name_tok, name, "local variable has opaque type", .{});
+        }
+    }
 
     const type_node = t.transType(scope, variable.qt, variable.name_tok) catch |err| switch (err) {
         error.UnsupportedType => {
@@ -622,15 +637,31 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         else => |e| return e,
     };
 
-    const init_node = if (variable.initializer) |init|
-        t.transExprCoercing(scope, init, .used) catch |err| switch (err) {
-            error.UnsupportedTranslation, error.UnsupportedType => {
-                return t.failDecl(variable.name_tok, name, "unable to resolve var init expr", .{});
-            },
-            else => |e| return e,
+    const init_node = init: {
+        if (variable.initializer) |init| {
+            const init_node = t.transExprCoercing(scope, init, .used) catch |err| switch (err) {
+                error.UnsupportedTranslation, error.UnsupportedType => {
+                    return t.failDecl(variable.name_tok, name, "unable to resolve var init expr", .{});
+                },
+                else => |e| return e,
+            };
+
+            if (!variable.qt.is(t.comp, .bool) and init_node.isBoolRes()) {
+                break :init try ZigTag.int_from_bool.create(t.arena, init_node);
+            } else {
+                break :init init_node;
+            }
         }
-    else
-        ZigTag.undefined_literal.init();
+        if (variable.storage_class == .@"extern") break :init null;
+        if (toplevel or variable.storage_class == .static or variable.thread_local) {
+            // The C language specification states that variables with static or threadlocal
+            // storage without an initializer are initialized to a zero value.
+
+            // std.mem.zeroes(T)
+            break :init try ZigTag.std_mem_zeroes.create(t.arena, type_node);
+        }
+        break :init ZigTag.undefined_literal.init();
+    };
 
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     const payload = try t.arena.create(ast.Payload.VarDecl);
@@ -639,8 +670,8 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         .data = .{
             .is_pub = toplevel,
             .is_const = variable.qt.@"const",
-            .is_extern = false,
-            .is_export = false,
+            .is_extern = variable.storage_class == .@"extern",
+            .is_export = toplevel and variable.storage_class == .auto,
             .is_threadlocal = variable.thread_local,
             .linksection_string = null,
             .alignment = alignment,
@@ -649,10 +680,13 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             .init = init_node,
         },
     };
-    const node = ZigNode.initPayload(&payload.base);
+    var node = ZigNode.initPayload(&payload.base);
     if (toplevel) {
         try t.addTopLevelDecl(name, node);
     } else {
+        if (variable.storage_class == .@"extern") {
+            node = try ZigTag.extern_local_var.create(t.arena, .{ .name = name, .init = node });
+        }
         try scope.appendNode(node);
         try bs.discardVariable(name);
     }
@@ -787,7 +821,7 @@ fn getTypeStr(t: *Translator, qt: QualType) ![]const u8 {
 }
 
 fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex) TypeError!ZigNode {
-    switch (qt.type(t.comp)) {
+    loop: switch (qt.type(t.comp)) {
         .atomic => {
             const type_name = try t.getTypeStr(qt);
             return t.fail(error.UnsupportedType, source_loc, "TODO support atomic type: '{s}'", .{type_name});
@@ -883,8 +917,8 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             const name = t.type_decls.get(typedef_ty.decl_node).?;
             return ZigTag.identifier.create(t.arena, name);
         },
-        // .attributed,
-        // .typeof,
+        .attributed => |attributed_ty| continue :loop attributed_ty.base.type(t.comp),
+        .typeof => |typeof_ty| continue :loop typeof_ty.base.type(t.comp),
         else => return t.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{try t.getTypeStr(qt)}),
     }
 }

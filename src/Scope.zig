@@ -72,7 +72,7 @@ pub const Block = struct {
     /// struct. The struct is named ExternLocal_[variable_name], the Zig variable
     /// within the struct itself is [variable_name] by necessity since it's an
     /// extern reference to an existing symbol.
-    const extern_inner_prepend = "ExternLocal";
+    pub const extern_inner_prepend = "ExternLocal";
 
     pub fn init(t: *Translator, parent: *Scope, labeled: bool) !Block {
         var blk: Block = .{

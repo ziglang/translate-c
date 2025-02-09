@@ -3,7 +3,6 @@ static const int int_var = 13;
 int foo;
 
 // translate
-// expect=fail
 //
 // pub extern var extern_var: c_int;
 // pub const int_var: c_int = 13;
