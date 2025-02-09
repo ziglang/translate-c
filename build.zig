@@ -6,6 +6,15 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const skip_debug = b.option(bool, "skip-debug", "Main test suite skips debug builds") orelse false;
+    const skip_release = b.option(bool, "skip-release", "Main test suite skips release builds") orelse false;
+    const skip_release_small = b.option(bool, "skip-release-small", "Main test suite skips release-small builds") orelse skip_release;
+    const skip_release_fast = b.option(bool, "skip-release-fast", "Main test suite skips release-fast builds") orelse skip_release;
+    const skip_release_safe = b.option(bool, "skip-release-safe", "Main test suite skips release-safe builds") orelse skip_release;
+    const skip_translate = b.option(bool, "skip-translate", "Main test suite skips translate tests") orelse false;
+    const skip_run_translated = b.option(bool, "skip-run-translated", "Main test suite skips run-translated tests") orelse false;
+    const use_llvm = b.option(bool, "llvm", "Use LLVM backend to generate aro executable");
+
     const aro = b.dependency("aro", .{
         .target = target,
         .optimize = optimize,
@@ -16,6 +25,8 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
     });
     exe.root_module.addImport("aro", aro.module("aro"));
     b.installDirectory(.{
@@ -32,14 +43,6 @@ pub fn build(b: *std.Build) !void {
     }
     const run_step = b.step("run", "Run translate-c");
     run_step.dependOn(&run_cmd.step);
-
-    const skip_debug = b.option(bool, "skip-debug", "Main test suite skips debug builds") orelse false;
-    const skip_release = b.option(bool, "skip-release", "Main test suite skips release builds") orelse false;
-    const skip_release_small = b.option(bool, "skip-release-small", "Main test suite skips release-small builds") orelse skip_release;
-    const skip_release_fast = b.option(bool, "skip-release-fast", "Main test suite skips release-fast builds") orelse skip_release;
-    const skip_release_safe = b.option(bool, "skip-release-safe", "Main test suite skips release-safe builds") orelse skip_release;
-    const skip_translate = b.option(bool, "skip-translate", "Main test suite skips translate tests") orelse false;
-    const skip_run_translated = b.option(bool, "skip-run-translated", "Main test suite skips run-translated tests") orelse false;
 
     const optimization_modes: []const std.builtin.OptimizeMode = modes: {
         var chosen_opt_modes_buf: [4]std.builtin.OptimizeMode = undefined;
@@ -95,5 +98,6 @@ pub fn build(b: *std.Build) !void {
         target,
         skip_translate,
         skip_run_translated,
+        use_llvm,
     );
 }

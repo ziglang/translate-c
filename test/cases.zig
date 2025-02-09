@@ -8,6 +8,7 @@ pub fn addCaseTests(
     target: std.Build.ResolvedTarget,
     skip_translate: bool,
     skip_run_translated: bool,
+    use_llvm: ?bool,
 ) !void {
     const test_translate_step = b.step("test-translate", "Run the C translation tests");
     if (!skip_translate) tests_step.dependOn(test_translate_step);
@@ -27,6 +28,8 @@ pub fn addCaseTests(
                 .root_source_file = b.path("src/main.zig"),
                 .target = target,
                 .optimize = mode,
+                .use_llvm = use_llvm,
+                .use_lld = use_llvm,
             });
             exe.root_module.addImport("aro", aro.module("aro"));
 
