@@ -1529,7 +1529,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             } else return t.fail(error.UnsupportedTranslation, negate_expr.op_tok, "C negation with non float non integer", .{});
         },
         .div_expr => |div_expr| res: {
-            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
+            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .signed) {
                 // signed integer division uses @divTrunc
                 const lhs = try t.transExpr(scope, div_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, div_expr.rhs, .used);
@@ -1539,7 +1539,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             break :res try t.transBinExpr(scope, div_expr, .div);
         },
         .mod_expr => |mod_expr| res: {
-            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
+            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .signed) {
                 // signed integer remainder uses std.zig.c_translation.signedRemainder
                 const lhs = try t.transExpr(scope, mod_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, mod_expr.rhs, .used);

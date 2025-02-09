@@ -16,7 +16,6 @@ unsigned u() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn s() c_int {
 //     var a: c_int = undefined;
