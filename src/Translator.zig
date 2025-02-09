@@ -14,6 +14,7 @@ const ast = @import("ast.zig");
 const ZigNode = ast.Node;
 const ZigTag = ZigNode.Tag;
 const builtins = @import("builtins.zig");
+const helpers = @import("helpers.zig");
 const Scope = @import("Scope.zig");
 
 pub const Error = std.mem.Allocator.Error;
@@ -58,9 +59,11 @@ global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// declaration whether or not the name is available.
 weak_global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 
-/// Set of builtins whose source has already been rendered to `render_buf`.
-rendered_builtins: std.StringHashMapUnmanaged(void) = .empty,
-render_buf: std.ArrayList(u8),
+/// Set of builtins whose source needs to be rendered.
+needed_builtins: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+
+/// Set of helpers whose source needs to be rendered.
+needed_helpers: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
 
 // TODO for macros
 pattern_list: PatternList,
@@ -144,7 +147,6 @@ pub fn translate(
         .pattern_list = try PatternList.init(gpa),
         .comp = comp,
         .tree = tree,
-        .render_buf = .init(gpa),
     };
     translator.global_scope.* = Scope.Root.init(&translator);
     defer {
@@ -157,8 +159,8 @@ pub fn translate(
         translator.typedefs.deinit(gpa);
         translator.global_scope.deinit();
         translator.pattern_list.deinit(gpa);
-        translator.render_buf.deinit();
-        translator.rendered_builtins.deinit(gpa);
+        translator.needed_builtins.deinit(gpa);
+        translator.needed_helpers.deinit(gpa);
     }
 
     try prepopulateGlobalNameTable(&translator);
@@ -171,13 +173,38 @@ pub fn translate(
         }
     }
 
+    var buf: std.ArrayList(u8) = .init(gpa);
+    defer buf.deinit();
+
+    for (translator.needed_builtins.values()) |source| {
+        try buf.appendSlice(source);
+    }
+
+    if (translator.needed_helpers.entries.len > 0) {
+        if (buf.items.len != 0) try buf.append('\n');
+
+        try buf.appendSlice("pub const __helpers = struct {\n");
+        for (translator.needed_helpers.values(), 0..) |source, i| {
+            if (i != 0) try buf.append('\n');
+
+            // Properly indent the functions.
+            var it = std.mem.splitScalar(u8, source, '\n');
+            while (it.next()) |line| {
+                if (line.len != 0) try buf.appendSlice("    ");
+                try buf.appendSlice(line);
+                if (it.rest().len != 0) try buf.append('\n');
+            }
+        }
+        try buf.appendSlice("\n};\n\n");
+    }
+
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
         gpa.free(zig_ast.source);
         zig_ast.deinit(gpa);
     }
-    try zig_ast.renderToArrayList(&translator.render_buf, .{});
-    return translator.render_buf.toOwnedSlice();
+    try zig_ast.renderToArrayList(&buf, .{});
+    return buf.toOwnedSlice();
 }
 
 fn prepopulateGlobalNameTable(t: *Translator) !void {
@@ -1540,10 +1567,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .mod_expr => |mod_expr| res: {
             if (qt.isInt(t.comp) and qt.signedness(t.comp) == .signed) {
-                // signed integer remainder uses std.zig.c_translation.signedRemainder
+                // signed integer remainder uses __helpers.signedRemainder
                 const lhs = try t.transExpr(scope, mod_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, mod_expr.rhs, .used);
-                break :res try ZigTag.signed_remainder.create(t.arena, .{ .lhs = lhs, .rhs = rhs });
+                break :res try t.transCreateNodeHelperCall(.signedRemainder, &.{ lhs, rhs });
             }
             // unsigned/float division uses the operator
             break :res try t.transBinExpr(scope, mod_expr, .mod);
@@ -2020,10 +2047,7 @@ fn transBuiltinCall(
 
     // Overriding a builtin function is a hard error in C
     // so we do not need to worry about aliasing.
-    const gop = try t.rendered_builtins.getOrPut(t.gpa, builtin_name);
-    if (!gop.found_existing) {
-        try t.render_buf.appendSlice(builtin.source);
-    }
+    try t.needed_builtins.put(t.gpa, builtin_name, builtin.source);
 
     const arg_nodes = try t.arena.alloc(ZigNode, call.args.len);
     for (call.args, arg_nodes) |c_arg, *zig_arg| {
@@ -2152,6 +2176,54 @@ fn transCreateNodeInfixOp(
     return ZigNode.initPayload(&payload.base);
 }
 
+fn transCreateNodeHelperCall(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args: []const ZigNode) !ZigNode {
+    switch (name) {
+        .div => {
+            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
+            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
+            try t.needed_helpers.put(t.gpa, "div", helpers.sources.div);
+        },
+        .rem => {
+            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
+            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
+            try t.needed_helpers.put(t.gpa, "signedRemainder", helpers.sources.signedRemainder);
+            try t.needed_helpers.put(t.gpa, "rem", helpers.sources.rem);
+        },
+        .CAST_OR_CALL => {
+            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
+            try t.needed_helpers.put(t.gpa, "CAST_OR_CALL", helpers.sources.CAST_OR_CALL);
+        },
+        .L_SUFFIX => {
+            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
+            try t.needed_helpers.put(t.gpa, "L_SUFFIX", helpers.sources.L_SUFFIX);
+        },
+        .LL_SUFFIX => {
+            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
+            try t.needed_helpers.put(t.gpa, "LL_SUFFIX", helpers.sources.LL_SUFFIX);
+        },
+        .U_SUFFIX => {
+            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
+            try t.needed_helpers.put(t.gpa, "U_SUFFIX", helpers.sources.U_SUFFIX);
+        },
+        .UL_SUFFIX => {
+            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
+            try t.needed_helpers.put(t.gpa, "UL_SUFFIX", helpers.sources.UL_SUFFIX);
+        },
+        .ULL_SUFFIX => {
+            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
+            try t.needed_helpers.put(t.gpa, "ULL_SUFFIX", helpers.sources.ULL_SUFFIX);
+        },
+        inline else => |tag| {
+            try t.needed_helpers.put(t.gpa, @tagName(tag), @field(helpers.sources, @tagName(tag)));
+        },
+    }
+
+    return ZigTag.helper_call.create(t.arena, .{
+        .name = @tagName(name),
+        .args = try t.arena.dupe(ZigNode, args),
+    });
+}
+
 /// Cast a signed integer node to a usize, for use in pointer arithmetic. Negative numbers
 /// will become very large positive numbers but that is ok since we only use this in
 /// pointer arithmetic expressions, where wraparound will ensure we get the correct value.
@@ -2177,7 +2249,7 @@ const PatternList = struct {
 
     /// Templates must be function-like macros
     /// first element is macro source, second element is the name of the function
-    /// in std.lib.zig.c_translation.Macros which implements it
+    /// in __helpers which implements it
     const templates = [_][2][]const u8{
         [2][]const u8{ "f_SUFFIX(X) (X ## f)", "F_SUFFIX" },
         [2][]const u8{ "F_SUFFIX(X) (X ## F)", "F_SUFFIX" },
@@ -2411,12 +2483,9 @@ fn tokenizeMacro(source: []const u8, tok_list: *std.ArrayList(CToken)) Error!voi
     }
 }
 
-// Testing here instead of test/translate_c.zig allows us to also test that the
-// mapped function exists in `std.zig.c_translation.Macros`
 test "Macro matching" {
     const testing = std.testing;
     const helper = struct {
-        const MacroFunctions = std.zig.c_translation.Macros;
         fn checkMacro(allocator: mem.Allocator, pattern_list: PatternList, source: []const u8, comptime expected_match: ?[]const u8) !void {
             var tok_list = std.ArrayList(CToken).init(allocator);
             defer tok_list.deinit();
@@ -2425,7 +2494,7 @@ test "Macro matching" {
             const matched = try pattern_list.match(allocator, macro_slicer);
             if (expected_match) |expected| {
                 try testing.expectEqualStrings(expected, matched.?.impl);
-                try testing.expect(@hasDecl(MacroFunctions, expected));
+                try testing.expect(@hasDecl(helpers.sources, expected));
             } else {
                 try testing.expectEqual(@as(@TypeOf(matched), null), matched);
             }

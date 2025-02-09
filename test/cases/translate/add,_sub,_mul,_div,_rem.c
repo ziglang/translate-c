@@ -28,7 +28,7 @@ unsigned u() {
 //     c = a - b;
 //     c = a * b;
 //     c = @divTrunc(a, b);
-//     c = @import("std").zig.c_translation.signedRemainder(a, b);
+//     c = __helpers.signedRemainder(a, b);
 //     return undefined;
 // }
 // pub export fn u() c_uint {

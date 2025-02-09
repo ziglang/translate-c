@@ -70,7 +70,6 @@ pub const Node = extern union {
         tuple,
         container_init,
         container_init_dot,
-        helpers_cast,
         /// _ = operand;
         discard,
 
@@ -121,10 +120,6 @@ pub const Node = extern union {
         const_cast,
         /// @volatileCast(operand)
         volatile_cast,
-        /// @import("std").zig.c_translation.promoteIntLiteral(value, type, base)
-        helpers_promoteIntLiteral,
-        /// @import("std").zig.c_translation.signedRemainder(lhs, rhs)
-        signed_remainder,
         /// @divTrunc(lhs, rhs)
         div_trunc,
         /// @intFromBool(operand)
@@ -191,8 +186,8 @@ pub const Node = extern union {
         /// @floor(operand)
         floor,
 
-        /// @import("std").zig.c_translation.MacroArithmetic.<op>(lhs, rhs)
-        macro_arithmetic,
+        /// __helpers.<name>(argshelper_call)
+        helper_call,
 
         asm_simple,
 
@@ -222,14 +217,6 @@ pub const Node = extern union {
         array_type,
         null_sentinel_array_type,
 
-        /// @import("std").zig.c_translation.sizeof(operand)
-        helpers_sizeof,
-        /// @import("std").zig.c_translation.FlexibleArrayType(lhs, rhs)
-        helpers_flexible_array_type,
-        /// @import("std").zig.c_translation.shuffleVectorIndex(lhs, rhs)
-        helpers_shuffle_vector_index,
-        /// @import("std").zig.c_translation.Macro.<operand>
-        helpers_macro,
         /// @Vector(lhs, rhs)
         vector,
         /// @import("std").mem.zeroes(operand)
@@ -302,7 +289,6 @@ pub const Node = extern union {
                 .if_not_break,
                 .switch_else,
                 .block_single,
-                .helpers_sizeof,
                 .int_from_bool,
                 .sizeof,
                 .alignof,
@@ -372,19 +358,15 @@ pub const Node = extern union {
                 .bit_xor,
                 .bit_xor_assign,
                 .div_trunc,
-                .signed_remainder,
                 .as,
                 .array_cat,
                 .ellipsis3,
                 .assign,
                 .array_access,
                 .std_mem_zeroinit,
-                .helpers_flexible_array_type,
-                .helpers_shuffle_vector_index,
                 .vector,
                 .div_exact,
                 .offset_of,
-                .helpers_cast,
                 .static_assert,
                 => Payload.BinOp,
 
@@ -397,7 +379,6 @@ pub const Node = extern union {
                 .fn_identifier,
                 .warning,
                 .type,
-                .helpers_macro,
                 => Payload.Value,
                 .discard => Payload.Discard,
                 .@"if" => Payload.If,
@@ -411,7 +392,6 @@ pub const Node = extern union {
                 .tuple => Payload.TupleInit,
                 .container_init => Payload.ContainerInit,
                 .container_init_dot => Payload.ContainerInitDot,
-                .helpers_promoteIntLiteral => Payload.PromoteIntLiteral,
                 .block => Payload.Block,
                 .c_pointer, .single_pointer => Payload.Pointer,
                 .array_type, .null_sentinel_array_type => Payload.Array,
@@ -424,7 +404,7 @@ pub const Node = extern union {
                 .string_slice => Payload.StringSlice,
                 .shuffle => Payload.Shuffle,
                 .builtin_extern => Payload.Extern,
-                .macro_arithmetic => Payload.MacroArithmetic,
+                .helper_call => Payload.HelperCall,
             };
         }
 
@@ -770,15 +750,6 @@ pub const Payload = struct {
         },
     };
 
-    pub const PromoteIntLiteral = struct {
-        base: Payload,
-        data: struct {
-            value: Node,
-            type: Node,
-            base: Node,
-        },
-    };
-
     pub const StringSlice = struct {
         base: Payload,
         data: struct {
@@ -805,15 +776,12 @@ pub const Payload = struct {
         },
     };
 
-    pub const MacroArithmetic = struct {
+    pub const HelperCall = struct {
         base: Payload,
         data: struct {
-            op: Operator,
-            lhs: Node,
-            rhs: Node,
+            name: []const u8,
+            args: []const Node,
         },
-
-        pub const Operator = enum { div, rem };
     };
 };
 
@@ -963,21 +931,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             try c.buf.append('\n');
             return 0;
         },
-        .helpers_cast => {
-            const payload = node.castTag(.helpers_cast).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "cast" });
-            return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
-        },
-        .helpers_promoteIntLiteral => {
-            const payload = node.castTag(.helpers_promoteIntLiteral).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "promoteIntLiteral" });
-            return renderCall(c, import_node, &.{ payload.type, payload.value, payload.base });
-        },
-        .helpers_sizeof => {
-            const payload = node.castTag(.helpers_sizeof).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "sizeof" });
-            return renderCall(c, import_node, &.{payload});
-        },
         .std_mem_zeroes => {
             const payload = node.castTag(.std_mem_zeroes).?.data;
             const import_node = try renderStdImport(c, &.{ "mem", "zeroes" });
@@ -986,16 +939,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .std_mem_zeroinit => {
             const payload = node.castTag(.std_mem_zeroinit).?.data;
             const import_node = try renderStdImport(c, &.{ "mem", "zeroInit" });
-            return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
-        },
-        .helpers_flexible_array_type => {
-            const payload = node.castTag(.helpers_flexible_array_type).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "FlexibleArrayType" });
-            return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
-        },
-        .helpers_shuffle_vector_index => {
-            const payload = node.castTag(.helpers_shuffle_vector_index).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "shuffleVectorIndex" });
             return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
         },
         .vector => {
@@ -1226,16 +1169,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 .data = undefined,
             });
         },
-        .helpers_macro => {
-            const payload = node.castTag(.helpers_macro).?.data;
-            const chain = [_][]const u8{
-                "zig",
-                "c_translation",
-                "Macros",
-                payload,
-            };
-            return renderStdImport(c, &chain);
-        },
         .string_slice => {
             const payload = node.castTag(.string_slice).?.data;
 
@@ -1443,11 +1376,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             const payload = node.castTag(.volatile_cast).?.data;
             return renderBuiltinCall(c, "@volatileCast", &.{payload});
         },
-        .signed_remainder => {
-            const payload = node.castTag(.signed_remainder).?.data;
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "signedRemainder" });
-            return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
-        },
         .div_trunc => {
             const payload = node.castTag(.div_trunc).?.data;
             return renderBuiltinCall(c, "@divTrunc", &.{ payload.lhs, payload.rhs });
@@ -1533,11 +1461,15 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 .{ .ptr_otherwise = &info_payload.base },
             });
         },
-        .macro_arithmetic => {
-            const payload = node.castTag(.macro_arithmetic).?.data;
-            const op = @tagName(payload.op);
-            const import_node = try renderStdImport(c, &.{ "zig", "c_translation", "MacroArithmetic", op });
-            return renderCall(c, import_node, &.{ payload.lhs, payload.rhs });
+        .helper_call => {
+            const payload = node.castTag(.helper_call).?.data;
+            const helpers_tok = try c.addNode(.{
+                .tag = .identifier,
+                .main_token = try c.addIdentifier("__helpers"),
+                .data = undefined,
+            });
+            const func = try renderFieldAccess(c, helpers_tok, payload.name);
+            return renderCall(c, func, payload.args);
         },
         .alignof => {
             const payload = node.castTag(.alignof).?.data;
@@ -2567,7 +2499,6 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .noreturn_type,
         .@"anytype",
         .div_trunc,
-        .signed_remainder,
         .int_cast,
         .const_cast,
         .volatile_cast,
@@ -2585,11 +2516,6 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .typeof,
         .typeinfo,
         .vector,
-        .helpers_sizeof,
-        .helpers_cast,
-        .helpers_promoteIntLiteral,
-        .helpers_shuffle_vector_index,
-        .helpers_flexible_array_type,
         .std_mem_zeroinit,
         .integer_literal,
         .float_literal,
@@ -2625,7 +2551,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .static_local_var,
         .extern_local_var,
         .mut_str,
-        .macro_arithmetic,
+        .helper_call,
         .byte_swap,
         .ceil,
         .cos,
@@ -2729,7 +2655,6 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .bit_or_assign,
         .bit_xor_assign,
         .assign,
-        .helpers_macro,
         .static_assert,
         .@"unreachable",
         => {

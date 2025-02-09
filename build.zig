@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) !void {
         const unit_test_step = b.step("test-unit", "Run unit tests");
         for (optimization_modes) |mode| {
             const unit_tests = b.addTest(.{
-                .root_source_file = b.path("src/Translator.zig"),
+                .root_source_file = b.path("src/main.zig"),
                 .target = target,
                 .optimize = mode,
             });

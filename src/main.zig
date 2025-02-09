@@ -140,3 +140,10 @@ fn renderErrors(d: *aro.Driver) u32 {
     d.comp.diagnostics.list.items.len = 0;
     return errors;
 }
+
+comptime {
+    if (@import("builtin").is_test) {
+        _ = Translator;
+        _ = @import("helpers.zig");
+    }
+}
