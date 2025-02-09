@@ -1635,6 +1635,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
         .int_literal => return t.transIntLiteral(scope, expr, used, .with_as),
         .char_literal => return t.transCharLiteral(scope, expr, used, .with_as),
+        .float_literal => return t.transFloatLiteral(scope, expr, used, .with_as),
         .string_literal_expr => |literal| res: {
             const val = t.tree.value_map.get(expr).?;
             const str_qt = literal.qt;
@@ -1669,6 +1670,7 @@ fn transExprCoercing(t: *Translator, scope: *Scope, expr: Node.Index, used: Resu
     switch (expr.get(t.tree)) {
         .int_literal => return t.transIntLiteral(scope, expr, used, .no_as),
         .char_literal => return t.transCharLiteral(scope, expr, used, .no_as),
+        .float_literal => return t.transFloatLiteral(scope, expr, used, .no_as),
         .cast => |cast| {
             if (cast.implicit) {
                 switch (cast.kind) {
@@ -1790,6 +1792,14 @@ fn transCastExpr(t: *Translator, scope: *Scope, cast: Node.Cast, used: ResultUse
             const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             if (sub_expr_node.isBoolRes()) return sub_expr_node;
             return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+        },
+        .float_cast => {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            return ZigTag.float_cast.create(t.arena, sub_expr_node);
+        },
+        .float_to_int => {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            return ZigTag.int_from_float.create(t.arena, sub_expr_node);
         },
         else => return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)}),
     }
@@ -2118,6 +2128,33 @@ fn transCharLiteral(
     const as_node = try ZigTag.as.create(t.arena, .{
         .lhs = try t.transType(scope, char_literal.qt, char_literal.literal_tok),
         .rhs = int_lit_node,
+    });
+    return t.maybeSuppressResult(used, as_node);
+}
+
+fn transFloatLiteral(
+    t: *Translator,
+    scope: *Scope,
+    literal_index: Node.Index,
+    used: ResultUsed,
+    suppress_as: SuppressCast,
+) TransError!ZigNode {
+    const val = t.tree.value_map.get(literal_index).?;
+    const float_literal = literal_index.get(t.tree).float_literal;
+
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(t.gpa);
+    const w = buf.writer(t.gpa);
+    _ = try val.print(float_literal.qt, t.comp, w);
+
+    const float_lit_node = try ZigTag.float_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+    if (suppress_as == .no_as) {
+        return t.maybeSuppressResult(used, float_lit_node);
+    }
+
+    const as_node = try ZigTag.as.create(t.arena, .{
+        .lhs = try t.transType(scope, float_literal.qt, float_literal.literal_tok),
+        .rhs = float_lit_node,
     });
     return t.maybeSuppressResult(used, as_node);
 }
