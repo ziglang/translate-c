@@ -5,10 +5,9 @@ struct Foo {
 };
 
 // translate
-// expect=fail
 //
 // pub const lws_callback_function = fn () callconv(.c) void;
 // pub const struct_Foo = extern struct {
-//     func: ?*const fn () callconv(.c) void = @import("std").mem.zeroes(?*const fn () callconv(.c) void),
-//     callback_http: ?*const lws_callback_function = @import("std").mem.zeroes(?*const lws_callback_function),
+//     func: ?*const fn () callconv(.c) void = null,
+//     callback_http: ?*const lws_callback_function = null,
 // };

@@ -8,13 +8,12 @@ struct foo {
 };
 
 // translate
-// expect=fail
 //
 // pub const fnptr_ty = ?*const fn () callconv(.c) void;
 // pub const fnptr_attr_ty = ?*const fn () callconv(.c) void;
 // pub const struct_foo = extern struct {
-//     foo: ?*const fn () callconv(.c) void = @import("std").mem.zeroes(?*const fn () callconv(.c) void),
-//     bar: ?*const fn () callconv(.c) void = @import("std").mem.zeroes(?*const fn () callconv(.c) void),
-//     baz: fnptr_ty = @import("std").mem.zeroes(fnptr_ty),
-//     qux: fnptr_attr_ty = @import("std").mem.zeroes(fnptr_attr_ty),
+//     foo: ?*const fn () callconv(.c) void = null,
+//     bar: ?*const fn () callconv(.c) void = null,
+//     baz: fnptr_ty = null,
+//     qux: fnptr_attr_ty = null,
 // };

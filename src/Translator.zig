@@ -498,7 +498,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             // initialized to zero. Some C APIs are designed with this in mind. Defaulting to zero
             // values for translated struct fields permits Zig code to comfortably use such an API.
             const default_value = if (container_kind == .@"struct")
-                try t.transZeroValue(field.qt, field_type, .no_as)
+                try t.createZeroValueNode(field.qt, field_type, .no_as)
             else
                 null;
 
@@ -690,9 +690,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         if (toplevel or variable.storage_class == .static or variable.thread_local) {
             // The C language specification states that variables with static or threadlocal
             // storage without an initializer are initialized to a zero value.
-
-            // std.mem.zeroes(T)
-            break :init try t.transZeroValue(variable.qt, type_node, .no_as);
+            break :init try t.createZeroValueNode(variable.qt, type_node, .no_as);
         }
         break :init ZigTag.undefined_literal.init();
     };
@@ -769,7 +767,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
                 .name = enum_val_name,
                 .is_public = toplevel,
                 .type = enum_const_type_node,
-                .value = try t.transCreateNodeInt(val),
+                .value = try t.createIntNode(val),
             });
             if (toplevel)
                 try t.addTopLevelDecl(enum_val_name, enum_const_def)
@@ -1570,7 +1568,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
                 // signed integer remainder uses __helpers.signedRemainder
                 const lhs = try t.transExpr(scope, mod_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, mod_expr.rhs, .used);
-                break :res try t.transCreateNodeHelperCall(.signedRemainder, &.{ lhs, rhs });
+                break :res try t.createHelperCallNode(.signedRemainder, &.{ lhs, rhs });
             }
             // unsigned/float division uses the operator
             break :res try t.transBinExpr(scope, mod_expr, .mod);
@@ -1660,7 +1658,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         else => {
             if (t.tree.value_map.get(expr)) |val| {
                 // TODO handle other values
-                const int = try t.transCreateNodeInt(val);
+                const int = try t.createIntNode(val);
                 const as_node = try ZigTag.as.create(t.arena, .{
                     .lhs = try t.transType(undefined, qt, undefined),
                     .rhs = int,
@@ -1877,7 +1875,7 @@ fn transBinExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag) 
     else
         rhs_uncasted;
 
-    return t.transCreateNodeInfixOp(op_id, lhs, rhs);
+    return t.createBinOpNode(op_id, lhs, rhs);
 }
 
 fn transBoolBinExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op: ZigTag) !ZigNode {
@@ -1886,7 +1884,7 @@ fn transBoolBinExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op: ZigTag)
     const lhs = try t.transBoolExpr(scope, bin.lhs);
     const rhs = try t.transBoolExpr(scope, bin.rhs);
 
-    return t.transCreateNodeInfixOp(op, lhs, rhs);
+    return t.createBinOpNode(op, lhs, rhs);
 }
 
 fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag) !ZigNode {
@@ -1898,7 +1896,7 @@ fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag
     const rhs = try t.transExprCoercing(scope, bin.rhs, .used);
     const rhs_casted = try ZigTag.int_cast.create(t.arena, rhs);
 
-    return t.transCreateNodeInfixOp(op_id, lhs, rhs_casted);
+    return t.createBinOpNode(op_id, lhs, rhs_casted);
 }
 
 fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, used: ResultUsed) TransError!ZigNode {
@@ -1958,7 +1956,7 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
             rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
         }
 
-        return t.transCreateNodeInfixOp(.assign, lhs, rhs);
+        return t.createBinOpNode(.assign, lhs, rhs);
     }
 
     var block_scope = try Scope.Block.init(t, scope, true);
@@ -1978,7 +1976,7 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
     const lhs = try t.transExprCoercing(&block_scope.base, bin.lhs, .used);
     const tmp_ident = try ZigTag.identifier.create(t.arena, tmp);
 
-    const assign = try t.transCreateNodeInfixOp(.assign, lhs, tmp_ident);
+    const assign = try t.createBinOpNode(.assign, lhs, tmp_ident);
     try block_scope.statements.append(t.gpa, assign);
 
     const break_node = try ZigTag.break_val.create(t.arena, .{
@@ -2007,7 +2005,7 @@ fn transIncDecExpr(
     const one_literal = ZigTag.one_literal.init();
     if (used == .unused) {
         const operand = try t.transExpr(scope, un.operand, .used);
-        return try t.transCreateNodeInfixOp(op, operand, one_literal);
+        return try t.createBinOpNode(op, operand, one_literal);
     }
 
     var block_scope = try Scope.Block.init(t, scope, true);
@@ -2021,7 +2019,7 @@ fn transIncDecExpr(
 
     const ref_ident = try ZigTag.identifier.create(t.arena, ref);
     const ref_deref = try ZigTag.deref.create(t.arena, ref_ident);
-    const effect = try t.transCreateNodeInfixOp(op, ref_deref, one_literal);
+    const effect = try t.createBinOpNode(op, ref_deref, one_literal);
 
     switch (position) {
         .pre => {
@@ -2059,7 +2057,7 @@ fn transPtrDiffExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!
     const lhs = try ZigTag.int_from_ptr.create(t.arena, lhs_uncasted);
     const rhs = try ZigTag.int_from_ptr.create(t.arena, rhs_uncasted);
 
-    const sub_res = try t.transCreateNodeInfixOp(.sub_wrap, lhs, rhs);
+    const sub_res = try t.createBinOpNode(.sub_wrap, lhs, rhs);
 
     // @divExact(@as(<platform-ptrdiff_t>, @bitCast(@intFromPtr(lhs)) -% @intFromPtr(rhs)), @sizeOf(<lhs target type>))
     const ptrdiff_type = try t.transTypeIntWidthOf(bin.qt, true);
@@ -2107,7 +2105,7 @@ fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin: Node.Binar
 
     const bitcast_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
 
-    return t.transCreateNodeInfixOp(op_id, lhs_node, bitcast_node);
+    return t.createBinOpNode(op_id, lhs_node, bitcast_node);
 }
 
 fn transBuiltinCall(
@@ -2161,7 +2159,7 @@ fn transIntLiteral(
     suppress_as: SuppressCast,
 ) TransError!ZigNode {
     const val = t.tree.value_map.get(literal_index).?;
-    const int_lit_node = try t.transCreateNodeInt(val);
+    const int_lit_node = try t.createIntNode(val);
     if (suppress_as == .no_as) {
         return t.maybeSuppressResult(used, int_lit_node);
     }
@@ -2194,9 +2192,9 @@ fn transCharLiteral(
     // e.g. 'abcd'
     const int_value = val.toInt(u32, t.comp).?;
     const int_lit_node = if (char_literal.kind == .ascii and int_value > 255)
-        try t.transCreateNodeNumber(int_value, .int)
+        try t.createNumberNode(int_value, .int)
     else
-        try t.transCreateCharLitNode(narrow, int_value);
+        try t.createCharLiteralNode(narrow, int_value);
 
     if (suppress_as == .no_as) {
         return t.maybeSuppressResult(used, int_lit_node);
@@ -2247,7 +2245,7 @@ fn transDefaultInit(
 ) TransError!ZigNode {
     assert(used == .used);
     const type_node = try t.transType(scope, default_init.qt, default_init.last_tok);
-    return try t.transZeroValue(default_init.qt, type_node, suppress_as);
+    return try t.createZeroValueNode(default_init.qt, type_node, suppress_as);
 }
 
 fn transArrayInit(
@@ -2268,7 +2266,7 @@ fn transArrayInit(
             .array_filler_expr => |array_filler| blk: {
                 const node = try ZigTag.array_filler.create(t.arena, .{
                     .type = array_item_type,
-                    .filler = try t.transZeroValue(array_item_qt, array_item_type, .no_as),
+                    .filler = try t.createZeroValueNode(array_item_qt, array_item_type, .no_as),
                     .count = @intCast(array_filler.count),
                 });
                 i += 1;
@@ -2363,25 +2361,25 @@ fn transStructInit(
 // Node creation helpers
 // =====================
 
-fn transZeroValue(
+fn createZeroValueNode(
     t: *Translator,
     qt: QualType,
     type_node: ZigNode,
     suppress_as: SuppressCast,
 ) !ZigNode {
-    switch (qt.type(t.comp)) {
+    switch (qt.base(t.comp).type) {
         .bool => return ZigTag.false_literal.init(),
         .int, .bit_int, .float => {
             const zero_literal = ZigTag.zero_literal.init();
             return switch (suppress_as) {
-                .with_as => try t.transCreateNodeInfixOp(.as, type_node, zero_literal),
+                .with_as => try t.createBinOpNode(.as, type_node, zero_literal),
                 .no_as => zero_literal,
             };
         },
         .pointer => {
             const null_literal = ZigTag.null_literal.init();
             return switch (suppress_as) {
-                .with_as => try t.transCreateNodeInfixOp(.as, type_node, null_literal),
+                .with_as => try t.createBinOpNode(.as, type_node, null_literal),
                 .no_as => null_literal,
             };
         },
@@ -2390,7 +2388,7 @@ fn transZeroValue(
     return try ZigTag.std_mem_zeroes.create(t.arena, type_node);
 }
 
-fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
+fn createIntNode(t: *Translator, int: aro.Value) !ZigNode {
     var space: aro.Interner.Tag.Int.BigIntSpace = undefined;
     var big = t.comp.interner.get(int.ref()).toBigInt(&space);
     const is_negative = !big.positive;
@@ -2404,7 +2402,7 @@ fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     return res;
 }
 
-fn transCreateNodeNumber(t: *Translator, num: anytype, num_kind: enum { int, float }) !ZigNode {
+fn createNumberNode(t: *Translator, num: anytype, num_kind: enum { int, float }) !ZigNode {
     const fmt_s = switch (@typeInfo(@TypeOf(num))) {
         .int, .comptime_int => "{d}",
         else => "{s}",
@@ -2416,14 +2414,14 @@ fn transCreateNodeNumber(t: *Translator, num: anytype, num_kind: enum { int, flo
         return ZigTag.integer_literal.create(t.arena, str);
 }
 
-fn transCreateCharLitNode(t: *Translator, narrow: bool, val: u32) TransError!ZigNode {
+fn createCharLiteralNode(t: *Translator, narrow: bool, val: u32) TransError!ZigNode {
     return ZigTag.char_literal.create(t.arena, if (narrow)
         try std.fmt.allocPrint(t.arena, "'{'}'", .{std.zig.fmtEscapes(&.{@as(u8, @intCast(val))})})
     else
         try std.fmt.allocPrint(t.arena, "'\\u{{{x}}}'", .{val}));
 }
 
-fn transCreateNodeInfixOp(
+fn createBinOpNode(
     t: *Translator,
     op: ZigTag,
     lhs: ZigNode,
@@ -2440,7 +2438,7 @@ fn transCreateNodeInfixOp(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn transCreateNodeHelperCall(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args: []const ZigNode) !ZigNode {
+fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args: []const ZigNode) !ZigNode {
     switch (name) {
         .div => {
             try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
