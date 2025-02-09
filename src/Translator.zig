@@ -1590,8 +1590,8 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .equal_expr => |equal_expr| try t.transBinExpr(scope, equal_expr, .equal),
         .not_equal_expr => |not_equal_expr| try t.transBinExpr(scope, not_equal_expr, .not_equal),
 
-        .bool_and_expr => |bool_and_expr| try t.transBinExpr(scope, bool_and_expr, .@"and"),
-        .bool_or_expr => |bool_or_expr| try t.transBinExpr(scope, bool_or_expr, .@"or"),
+        .bool_and_expr => |bool_and_expr| try t.transBoolBinExpr(scope, bool_and_expr, .@"and"),
+        .bool_or_expr => |bool_or_expr| try t.transBoolBinExpr(scope, bool_or_expr, .@"or"),
 
         .bit_and_expr => |bit_and_expr| try t.transBinExpr(scope, bit_and_expr, .bit_and),
         .bit_or_expr => |bit_or_expr| try t.transBinExpr(scope, bit_or_expr, .bit_or),
@@ -1759,6 +1759,11 @@ fn transCastExpr(t: *Translator, scope: *Scope, cast: Node.Cast, used: ResultUse
             }
             return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)});
         },
+        .int_to_bool => {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            if (sub_expr_node.isBoolRes()) return sub_expr_node;
+            return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+        },
         else => return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)}),
     }
 }
@@ -1821,6 +1826,15 @@ fn transBinExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag) 
     return t.transCreateNodeInfixOp(op_id, lhs, rhs);
 }
 
+fn transBoolBinExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op: ZigTag) !ZigNode {
+    std.debug.assert(op == .@"and" or op == .@"or");
+
+    const lhs = try t.transBoolExpr(scope, bin.lhs);
+    const rhs = try t.transBoolExpr(scope, bin.rhs);
+
+    return t.transCreateNodeInfixOp(op, lhs, rhs);
+}
+
 fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag) !ZigNode {
     std.debug.assert(op_id == .shl or op_id == .shr);
 
@@ -1834,9 +1848,6 @@ fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag
 }
 
 fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, used: ResultUsed) TransError!ZigNode {
-    // Conditional operator branches are implicitly casted to void when not used.
-    if (used == .unused) assert(cond_expr.qt.is(t.comp, .void));
-
     var cond_scope: Scope.Condition = .{
         .base = .{
             .parent = scope,
@@ -1846,12 +1857,12 @@ fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, use
     defer cond_scope.deinit();
     const cond = try t.transBoolExpr(&cond_scope.base, cond_expr.cond);
 
-    var then_body = try t.transExprCoercing(scope, cond_expr.then_expr, .used);
+    var then_body = try t.transExprCoercing(scope, cond_expr.then_expr, used);
     if (then_body.isBoolRes() and !cond_expr.qt.is(t.comp, .bool)) {
         then_body = try ZigTag.int_from_bool.create(t.arena, then_body);
     }
 
-    var else_body = try t.transExprCoercing(scope, cond_expr.else_expr, .used);
+    var else_body = try t.transExprCoercing(scope, cond_expr.else_expr, used);
     if (else_body.isBoolRes() and !cond_expr.qt.is(t.comp, .bool)) {
         else_body = try ZigTag.int_from_bool.create(t.arena, else_body);
     }

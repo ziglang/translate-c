@@ -1,7 +1,7 @@
 _Static_assert(1 == 1, "");
 
 // translate
-// target=x86_64-linux
-// expect=fail
 //
-// tmp.c:1:1: warning: ignoring _Static_assert declaration
+// comptime {
+//     if (!(@as(c_int, 1) == @as(c_int, 1))) @compileError("static assertion failed \"\"");
+// }

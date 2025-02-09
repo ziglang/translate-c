@@ -10,7 +10,6 @@ int test_comparisons(int a, int b) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn test_comparisons(arg_a: c_int, arg_b: c_int) c_int {
 //     var a = arg_a;
