@@ -12,7 +12,6 @@ int *foo3(int *a) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo1(arg_a: c_uint) c_uint {
 //     var a = arg_a;

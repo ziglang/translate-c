@@ -12,7 +12,6 @@ void foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     var i: c_int = 0;

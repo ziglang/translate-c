@@ -1632,6 +1632,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
         .assign_expr => |assign_expr| return t.transAssignExpr(scope, assign_expr, used),
+        .pre_inc_expr => |un| return t.transIncDecExpr(scope, un, .pre, .inc, used),
+        .pre_dec_expr => |un| return t.transIncDecExpr(scope, un, .pre, .dec, used),
+        .post_inc_expr => |un| return t.transIncDecExpr(scope, un, .post, .inc, used),
+        .post_dec_expr => |un| return t.transIncDecExpr(scope, un, .post, .dec, used),
 
         .int_literal => return t.transIntLiteral(scope, expr, used, .with_as),
         .char_literal => return t.transCharLiteral(scope, expr, used, .with_as),
@@ -1969,6 +1973,68 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
         .val = tmp_ident,
     });
     try block_scope.statements.append(t.gpa, break_node);
+
+    return try block_scope.complete();
+}
+
+fn transIncDecExpr(
+    t: *Translator,
+    scope: *Scope,
+    un: Node.Unary,
+    position: enum { pre, post },
+    kind: enum { inc, dec },
+    used: ResultUsed,
+) !ZigNode {
+    const is_wrapping = t.typeHasWrappingOverflow(un.qt);
+    const op: ZigTag = switch (kind) {
+        .inc => if (is_wrapping) .add_wrap_assign else .add_assign,
+        .dec => if (is_wrapping) .sub_wrap_assign else .sub_assign,
+    };
+
+    const one_literal = ZigTag.one_literal.init();
+    if (used == .unused) {
+        const operand = try t.transExpr(scope, un.operand, .used);
+        return try t.transCreateNodeInfixOp(op, operand, one_literal);
+    }
+
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    const ref = try block_scope.reserveMangledName("ref");
+    const operand = try t.transExprCoercing(&block_scope.base, un.operand, .used);
+    const operand_ref = try ZigTag.address_of.create(t.arena, operand);
+    const ref_decl = try ZigTag.var_simple.create(t.arena, .{ .name = ref, .init = operand_ref });
+    try block_scope.statements.append(t.gpa, ref_decl);
+
+    const ref_ident = try ZigTag.identifier.create(t.arena, ref);
+    const ref_deref = try ZigTag.deref.create(t.arena, ref_ident);
+    const effect = try t.transCreateNodeInfixOp(op, ref_deref, one_literal);
+
+    switch (position) {
+        .pre => {
+            try block_scope.statements.append(t.gpa, effect);
+
+            const break_node = try ZigTag.break_val.create(t.arena, .{
+                .label = block_scope.label,
+                .val = ref_deref,
+            });
+            try block_scope.statements.append(t.gpa, break_node);
+        },
+        .post => {
+            const tmp = try block_scope.reserveMangledName("tmp");
+            const tmp_decl = try ZigTag.var_simple.create(t.arena, .{ .name = tmp, .init = ref_deref });
+            try block_scope.statements.append(t.gpa, tmp_decl);
+
+            try block_scope.statements.append(t.gpa, effect);
+
+            const tmp_ident = try ZigTag.identifier.create(t.arena, tmp);
+            const break_node = try ZigTag.break_val.create(t.arena, .{
+                .label = block_scope.label,
+                .val = tmp_ident,
+            });
+            try block_scope.statements.append(t.gpa, break_node);
+        },
+    }
 
     return try block_scope.complete();
 }
