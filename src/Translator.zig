@@ -1653,10 +1653,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
             break :res try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
         },
-        .default_init_expr => |default_init| try t.transDefaultInit(scope, default_init, used, .with_as),
-        .array_init_expr => |array_init| try t.transArrayInit(scope, array_init, used),
-        .union_init_expr => |union_init| try t.transUnionInit(scope, union_init, used),
-        .struct_init_expr => |struct_init| try t.transStructInit(scope, struct_init, used),
+        .default_init_expr => |default_init| return t.transDefaultInit(scope, default_init, used, .with_as),
+        .array_init_expr => |array_init| return t.transArrayInit(scope, array_init, used),
+        .union_init_expr => |union_init| return t.transUnionInit(scope, union_init, used),
+        .struct_init_expr => |struct_init| return t.transStructInit(scope, struct_init, used),
         else => {
             if (t.tree.value_map.get(expr)) |val| {
                 // TODO handle other values
@@ -2246,8 +2246,8 @@ fn transDefaultInit(
     suppress_as: SuppressCast,
 ) TransError!ZigNode {
     assert(used == .used);
-    const @"type" = try t.transType(scope, default_init.qt, default_init.last_tok);
-    return try t.transZeroValue(default_init.qt, @"type", suppress_as);
+    const type_node = try t.transType(scope, default_init.qt, default_init.last_tok);
+    return try t.transZeroValue(default_init.qt, type_node, suppress_as);
 }
 
 fn transArrayInit(
