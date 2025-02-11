@@ -16,7 +16,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     const union_unnamed_1 = extern union {
@@ -28,7 +27,7 @@ void foo() {
 //     const Foo = union_unnamed_1;
 //     _ = &Foo;
 //     var a: Foo = Foo{
-//         .A = @as(c_int, 0),
+//         .A = 0,
 //     };
 //     _ = &a;
 //     {
@@ -41,7 +40,7 @@ void foo() {
 //         const Foo_1 = union_unnamed_2;
 //         _ = &Foo_1;
 //         var a_2: Foo_1 = Foo_1{
-//             .A = @as(c_int, 0),
+//             .A = 0,
 //         };
 //         _ = &a_2;
 //     }

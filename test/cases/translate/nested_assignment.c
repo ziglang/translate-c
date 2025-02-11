@@ -3,7 +3,6 @@ int foo(int *p, int x) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo(arg_p: [*c]c_int, arg_x: c_int) c_int {
 //     var p = arg_p;

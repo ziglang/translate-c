@@ -10,10 +10,10 @@ struct __attribute__((packed)) bar {
 // translate
 //
 // pub const struct_bar = extern struct {
-//     a: c_short align(1) = @import("std").mem.zeroes(c_short),
-//     b: f32 align(1) = @import("std").mem.zeroes(f32),
-//     c: f64 align(1) = @import("std").mem.zeroes(f64),
-//     x: c_short align(1) = @import("std").mem.zeroes(c_short),
-//     y: f32 align(1) = @import("std").mem.zeroes(f32),
-//     z: f64 align(1) = @import("std").mem.zeroes(f64),
+//     a: c_short align(1) = 0,
+//     b: f32 align(1) = 0,
+//     c: f64 align(1) = 0,
+//     x: c_short align(1) = 0,
+//     y: f32 align(1) = 0,
+//     z: f64 align(1) = 0,
 // };

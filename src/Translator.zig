@@ -498,7 +498,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             // initialized to zero. Some C APIs are designed with this in mind. Defaulting to zero
             // values for translated struct fields permits Zig code to comfortably use such an API.
             const default_value = if (container_kind == .@"struct")
-                try ZigTag.std_mem_zeroes.create(t.arena, field_type)
+                try t.transZeroValue(field.qt, field_type, .no_as)
             else
                 null;
 
@@ -692,7 +692,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             // storage without an initializer are initialized to a zero value.
 
             // std.mem.zeroes(T)
-            break :init try ZigTag.std_mem_zeroes.create(t.arena, type_node);
+            break :init try t.transZeroValue(variable.qt, type_node, .no_as);
         }
         break :init ZigTag.undefined_literal.init();
     };
@@ -1653,6 +1653,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
             break :res try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
         },
+        .default_init_expr => |default_init| try t.transDefaultInit(scope, default_init, used, .with_as),
+        .array_init_expr => |array_init| try t.transArrayInit(scope, array_init, used),
+        .union_init_expr => |union_init| try t.transUnionInit(scope, union_init, used),
+        .struct_init_expr => |struct_init| try t.transStructInit(scope, struct_init, used),
         else => {
             if (t.tree.value_map.get(expr)) |val| {
                 // TODO handle other values
@@ -1678,6 +1682,7 @@ fn transExprCoercing(t: *Translator, scope: *Scope, expr: Node.Index, used: Resu
         .cast => |cast| {
             if (cast.implicit) {
                 switch (cast.kind) {
+                    .null_to_pointer => return ZigTag.null_literal.init(),
                     .int_to_float => return t.transExprCoercing(scope, cast.operand, used),
                     .int_cast => {
                         if (t.tree.value_map.get(cast.operand)) |val| {
@@ -1693,6 +1698,7 @@ fn transExprCoercing(t: *Translator, scope: *Scope, expr: Node.Index, used: Resu
                 return t.maybeSuppressResult(used, try t.transCastExpr(scope, cast, used));
             }
         },
+        .default_init_expr => |default_init| return try t.transDefaultInit(scope, default_init, used, .no_as),
         else => {},
     }
 
@@ -1777,6 +1783,13 @@ fn transCastExpr(t: *Translator, scope: *Scope, cast: Node.Cast, used: ResultUse
         .to_void => {
             assert(used == .unused);
             return t.transExpr(scope, cast.operand, .unused);
+        },
+        .null_to_pointer => {
+            const as = try ZigTag.as.create(t.arena, .{
+                .lhs = try t.transType(scope, cast.qt, cast.l_paren),
+                .rhs = ZigTag.null_literal.init(),
+            });
+            return as;
         },
         .array_to_pointer => {
             if (t.tree.value_map.get(cast.operand)) |val| {
@@ -2225,9 +2238,157 @@ fn transFloatLiteral(
     return t.maybeSuppressResult(used, as_node);
 }
 
+fn transDefaultInit(
+    t: *Translator,
+    scope: *Scope,
+    default_init: Node.DefaultInit,
+    used: ResultUsed,
+    suppress_as: SuppressCast,
+) TransError!ZigNode {
+    assert(used == .used);
+    const @"type" = try t.transType(scope, default_init.qt, default_init.last_tok);
+    return try t.transZeroValue(default_init.qt, @"type", suppress_as);
+}
+
+fn transArrayInit(
+    t: *Translator,
+    scope: *Scope,
+    array_init: Node.ContainerInit,
+    used: ResultUsed,
+) TransError!ZigNode {
+    assert(used == .used);
+    const array_item_qt = array_init.container_qt.childType(t.comp);
+    const array_item_type = try t.transType(scope, array_item_qt, array_init.l_brace_tok);
+    var maybe_lhs: ?ZigNode = null;
+    var val_list: std.ArrayListUnmanaged(ZigNode) = .empty;
+    defer val_list.deinit(t.gpa);
+    var i: usize = 0;
+    while (i < array_init.items.len) {
+        const rhs = switch (array_init.items[i].get(t.tree)) {
+            .array_filler_expr => |array_filler| blk: {
+                const node = try ZigTag.array_filler.create(t.arena, .{
+                    .type = array_item_type,
+                    .filler = try t.transZeroValue(array_item_qt, array_item_type, .no_as),
+                    .count = @intCast(array_filler.count),
+                });
+                i += 1;
+                break :blk node;
+            },
+            else => blk: {
+                defer val_list.clearRetainingCapacity();
+                while (i < array_init.items.len) : (i += 1) {
+                    if (array_init.items[i].get(t.tree) == .array_filler_expr) break;
+                    const expr = try t.transExprCoercing(scope, array_init.items[i], .used);
+                    try val_list.append(t.gpa, expr);
+                }
+                const array_type = try ZigTag.array_type.create(t.arena, .{
+                    .elem_type = array_item_type,
+                    .len = val_list.items.len,
+                });
+                const array_init_node = try ZigTag.array_init.create(t.arena, .{
+                    .cond = array_type,
+                    .cases = try t.arena.dupe(ZigNode, val_list.items),
+                });
+                break :blk array_init_node;
+            },
+        };
+        maybe_lhs = if (maybe_lhs) |lhs| blk: {
+            const cat = try ZigTag.array_cat.create(t.arena, .{
+                .lhs = lhs,
+                .rhs = rhs,
+            });
+            break :blk cat;
+        } else rhs;
+    }
+    return maybe_lhs orelse try ZigTag.container_init_dot.create(t.arena, &.{});
+}
+
+fn transUnionInit(
+    t: *Translator,
+    scope: *Scope,
+    union_init: Node.UnionInit,
+    used: ResultUsed,
+) TransError!ZigNode {
+    assert(used == .used);
+    const init_expr = union_init.initializer orelse
+        return ZigTag.undefined_literal.init();
+
+    if (init_expr.get(t.tree) == .default_init_expr) {
+        return try t.transExpr(scope, init_expr, used);
+    }
+
+    const union_type = try t.transType(scope, union_init.union_qt, union_init.l_brace_tok);
+    const field_init = try t.arena.create(ast.Payload.ContainerInit.Initializer);
+    const field = union_init.union_qt.base(t.comp).type.@"union".fields[union_init.field_index];
+    field_init.* = .{
+        .name = field.name.lookup(t.comp),
+        .value = try t.transExprCoercing(scope, init_expr, .used),
+    };
+    const container_init = try ZigTag.container_init.create(t.arena, .{
+        .lhs = union_type,
+        .inits = field_init[0..1],
+    });
+    return container_init;
+}
+
+fn transStructInit(
+    t: *Translator,
+    scope: *Scope,
+    struct_init: Node.ContainerInit,
+    used: ResultUsed,
+) TransError!ZigNode {
+    assert(used == .used);
+    const struct_type = try t.transType(scope, struct_init.container_qt, struct_init.l_brace_tok);
+    const field_inits = try t.arena.alloc(ast.Payload.ContainerInit.Initializer, struct_init.items.len);
+
+    for (
+        field_inits,
+        struct_init.items,
+        struct_init.container_qt.base(t.comp).type.@"struct".fields,
+    ) |*init, field_expr, field| {
+        init.* = .{
+            .name = field.name.lookup(t.comp),
+            .value = try t.transExprCoercing(scope, field_expr, .used),
+        };
+    }
+
+    const container_init = try ZigTag.container_init.create(t.arena, .{
+        .lhs = struct_type,
+        .inits = field_inits,
+    });
+    return container_init;
+}
+
 // =====================
 // Node creation helpers
 // =====================
+
+fn transZeroValue(
+    t: *Translator,
+    qt: QualType,
+    type_node: ZigNode,
+    suppress_as: SuppressCast,
+) !ZigNode {
+    switch (qt.type(t.comp)) {
+        .bool => return ZigTag.false_literal.init(),
+        .int, .bit_int, .float => {
+            const zero_literal = ZigTag.zero_literal.init();
+            return switch (suppress_as) {
+                .with_as => try t.transCreateNodeInfixOp(.as, type_node, zero_literal),
+                .no_as => zero_literal,
+            };
+        },
+        .pointer => {
+            const null_literal = ZigTag.null_literal.init();
+            return switch (suppress_as) {
+                .with_as => try t.transCreateNodeInfixOp(.as, type_node, null_literal),
+                .no_as => null_literal,
+            };
+        },
+        else => {},
+    }
+    return try ZigTag.std_mem_zeroes.create(t.arena, type_node);
+}
 
 fn transCreateNodeInt(t: *Translator, int: aro.Value) !ZigNode {
     var space: aro.Interner.Tag.Int.BigIntSpace = undefined;

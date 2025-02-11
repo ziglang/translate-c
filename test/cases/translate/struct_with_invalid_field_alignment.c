@@ -21,14 +21,14 @@ struct baz {
 // target=x86_64-linux
 //
 // pub const struct_foo = extern struct {
-//     x: c_int = @import("std").mem.zeroes(c_int),
+//     x: c_int = 0,
 // };
 //
 // pub const struct_bar = extern struct {
-//     y: f32 = @import("std").mem.zeroes(f32),
+//     y: f32 = 0,
 // };
 //
 // pub const struct_baz = extern struct {
-//     z: f64 = @import("std").mem.zeroes(f64),
+//     z: f64 = 0,
 // };
 //

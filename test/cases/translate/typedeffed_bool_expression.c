@@ -5,13 +5,12 @@ void foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub const yes = [*c]u8;
 // pub export fn foo() void {
 //     var a: yes = undefined;
 //     _ = &a;
 //     if (a != null) {
-//         _ = @as(c_int, 2);
+//         _ = 2;
 //     }
 // }

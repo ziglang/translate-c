@@ -5,7 +5,7 @@ struct comptime {
 // translate
 //
 // pub const struct_comptime = extern struct {
-//     @"defer": c_int = @import("std").mem.zeroes(c_int),
+//     @"defer": c_int = 0,
 // };
 // 
 // pub const @"comptime" = struct_comptime;
