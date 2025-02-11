@@ -21,8 +21,8 @@ struct Foo {
 // translate
 //
 // pub const struct_A = extern struct {
-//     x: c_short = @import("std").mem.zeroes(c_short),
-//     y: f64 = @import("std").mem.zeroes(f64),
+//     x: c_short = 0,
+//     y: f64 = 0,
 // };
 //
 // pub const union_B = extern union {

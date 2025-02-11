@@ -16,34 +16,32 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     const struct_Foo = extern struct {
-//         A: c_int = @import("std").mem.zeroes(c_int),
-//         B: c_int = @import("std").mem.zeroes(c_int),
-//         C: c_int = @import("std").mem.zeroes(c_int),
+//         A: c_int = 0,
+//         B: c_int = 0,
+//         C: c_int = 0,
 //     };
 //     _ = &struct_Foo;
 //     var a: struct_Foo = struct_Foo{
-//         .A = @as(c_int, 0),
+//         .A = 0,
 //         .B = 0,
 //         .C = 0,
 //     };
 //     _ = &a;
 //     {
 //         const struct_Foo_1 = extern struct {
-//             A: c_int = @import("std").mem.zeroes(c_int),
-//             B: c_int = @import("std").mem.zeroes(c_int),
-//             C: c_int = @import("std").mem.zeroes(c_int),
+//             A: c_int = 0,
+//             B: c_int = 0,
+//             C: c_int = 0,
 //         };
 //         _ = &struct_Foo_1;
 //         var a_2: struct_Foo_1 = struct_Foo_1{
-//             .A = @as(c_int, 0),
+//             .A = 0,
 //             .B = 0,
 //             .C = 0,
 //         };
 //         _ = &a_2;
 //     }
 // }
-

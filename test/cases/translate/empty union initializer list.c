@@ -8,7 +8,6 @@ void foo(void) {
 }
 // translate
 // target=x86_64-linux
-// expect=fail
 //
 // pub const union_U = extern union {
 //     x: c_int,

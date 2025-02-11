@@ -3,10 +3,8 @@ struct Foo {
 };
 
 // translate
-// expect=fail
 //
 // pub const struct_Foo = extern struct {
-//     derp: ?*const fn ([*c]struct_Foo) callconv(.c) void = @import("std").mem.zeroes(?*const fn ([*c]struct_Foo) callconv(.c) void),
+//     derp: ?*const fn (foo: [*c]struct_Foo) callconv(.c) void = null,
 // };
-//
 // pub const Foo = struct_Foo;

@@ -5,7 +5,7 @@ struct Foo {
 // translate
 //
 // const struct_Foo = extern struct {
-//     x: c_int = @import("std").mem.zeroes(c_int),
+//     x: c_int = 0,
 // };
 // 
 // pub const Foo = struct_Foo;

@@ -11,7 +11,7 @@ struct Foo {
 // target=x86_64-linux-gnu
 //
 // pub const struct_Bar_1 = extern struct {
-//     b: c_int = @import("std").mem.zeroes(c_int),
+//     b: c_int = 0,
 // };
 // pub const struct_Foo = extern struct {
 //     c: struct_Bar_1 = @import("std").mem.zeroes(struct_Bar_1),

@@ -12,7 +12,7 @@ union Foo{
 // translate
 //
 // const struct_unnamed_1 = extern struct {
-//     b: c_int = @import("std").mem.zeroes(c_int),
+//     b: c_int = 0,
 // };
 // 
 // pub const union_Foo = extern union {
