@@ -1805,6 +1805,28 @@ fn transCastExpr(
                 if (sub_expr_node.isBoolRes()) return sub_expr_node;
                 return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
             },
+            .float_to_bool => {
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+            },
+            .pointer_to_bool => {
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.null_literal.init() });
+            },
+            .bool_to_int => {
+                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+                break :to_cast try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+            },
+            .bool_to_float => {
+                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+                const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+                break :to_cast try ZigTag.float_from_int.create(t.arena, int_from_bool);
+            },
+            .bool_to_pointer => {
+                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+                const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+                break :to_cast try ZigTag.ptr_from_int.create(t.arena, int_from_bool);
+            },
             .float_cast => {
                 const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
                 break :to_cast try ZigTag.float_cast.create(t.arena, sub_expr_node);
