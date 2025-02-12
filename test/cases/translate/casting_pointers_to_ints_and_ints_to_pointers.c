@@ -5,12 +5,11 @@ void bar(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub extern fn foo() void;
 // pub export fn bar() void {
-//     var func_ptr: ?*anyopaque = @as(?*anyopaque, @ptrCast(&foo));
+//     var func_ptr: ?*anyopaque = &foo;
 //     _ = &func_ptr;
-//     var typed_func_ptr: ?*const fn () callconv(.c) void = @as(?*const fn () callconv(.c) void, @ptrFromInt(@as(c_ulong, @intCast(@intFromPtr(func_ptr)))));
+//     var typed_func_ptr: ?*const fn () callconv(.c) void = @ptrFromInt(@as(c_ulong, @intFromPtr(func_ptr)));
 //     _ = &typed_func_ptr;
 // }
