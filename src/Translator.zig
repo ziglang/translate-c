@@ -1795,6 +1795,11 @@ fn transCastExpr(
 
                     return try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
                 }
+
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                const ref = try ZigTag.address_of.create(t.arena, sub_expr_node);
+                const align_cast = try ZigTag.align_cast.create(t.arena, ref);
+                break :to_cast try ZigTag.ptr_cast.create(t.arena, align_cast);
             },
             .int_to_pointer => {
                 const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
