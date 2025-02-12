@@ -647,6 +647,7 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
 fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!void {
     var name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
+    const is_static_local = !toplevel and variable.storage_class == .static;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
     if (!toplevel) {
         if (variable.storage_class == .@"extern") {
@@ -707,7 +708,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             .is_threadlocal = variable.thread_local,
             .linksection_string = null,
             .alignment = alignment,
-            .name = name,
+            .name = if (is_static_local) Scope.Block.static_inner_name else name,
             .type = type_node,
             .init = init_node,
         },
@@ -718,6 +719,9 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     } else {
         if (variable.storage_class == .@"extern") {
             node = try ZigTag.extern_local_var.create(t.arena, .{ .name = name, .init = node });
+        }
+        if (variable.storage_class == .static) {
+            node = try ZigTag.static_local_var.create(t.arena, .{ .name = name, .init = node });
         }
         try scope.appendNode(node);
         try bs.discardVariable(name);
