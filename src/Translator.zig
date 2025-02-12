@@ -1796,6 +1796,10 @@ fn transCastExpr(
                     return try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
                 }
             },
+            .int_to_pointer => {
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                break :to_cast try ZigTag.ptr_from_int.create(t.arena, sub_expr_node);
+            },
             .int_to_bool => {
                 const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
                 if (sub_expr_node.isBoolRes()) return sub_expr_node;
@@ -1809,6 +1813,10 @@ fn transCastExpr(
             .float_to_int => {
                 const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
                 break :to_cast try ZigTag.int_from_float.create(t.arena, sub_expr_node);
+            },
+            .pointer_to_int => {
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                break :to_cast try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
             },
             .bitcast => {
                 const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
