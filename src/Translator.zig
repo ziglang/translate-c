@@ -1810,6 +1810,13 @@ fn transCastExpr(
                 const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
                 break :to_cast try ZigTag.int_from_float.create(t.arena, sub_expr_node);
             },
+            .bitcast => {
+                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+                if (cast.qt.isPointer(t.comp) and cast.operand.qt(t.tree).isPointer(t.comp)) {
+                    const align_cast = try ZigTag.align_cast.create(t.arena, sub_expr_node);
+                    break :to_cast try ZigTag.ptr_cast.create(t.arena, align_cast);
+                }
+            },
             else => {},
         }
         return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)});

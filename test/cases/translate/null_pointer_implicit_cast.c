@@ -3,7 +3,6 @@ int* foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() [*c]c_int {
 //     return null;
