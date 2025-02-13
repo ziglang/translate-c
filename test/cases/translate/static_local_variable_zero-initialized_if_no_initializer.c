@@ -5,11 +5,10 @@ int bar(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub const struct_FOO = extern struct {
-//     x: c_int = @import("std").mem.zeroes(c_int),
-//     y: c_int = @import("std").mem.zeroes(c_int),
+//     x: c_int = 0,
+//     y: c_int = 0,
 // };
 // pub export fn bar() c_int {
 //     const foo = struct {
@@ -18,3 +17,4 @@ int bar(void) {
 //     _ = &foo;
 //     return foo.static.x;
 // }
+// pub const FOO = struct_FOO;
