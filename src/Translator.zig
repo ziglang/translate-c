@@ -43,6 +43,11 @@ type_decls: std.AutoArrayHashMapUnmanaged(Node.Index, []const u8) = .empty,
 opaque_demotes: std.AutoHashMapUnmanaged(QualType, void) = .empty,
 /// Table of unnamed enums and records that are child types of typedefs.
 unnamed_typedefs: std.AutoHashMapUnmanaged(QualType, []const u8) = .empty,
+/// Table of anonymous record to generated field names.
+anonymous_record_field_names: std.AutoHashMapUnmanaged(struct {
+    parent: QualType,
+    field: QualType,
+}, []const u8) = .empty,
 
 /// This one is different than the root scope's name table. This contains
 /// a list of names that we found by visiting all the top level decls without
@@ -156,6 +161,7 @@ pub fn translate(
         translator.weak_global_names.deinit(gpa);
         translator.opaque_demotes.deinit(gpa);
         translator.unnamed_typedefs.deinit(gpa);
+        translator.anonymous_record_field_names.deinit(gpa);
         translator.typedefs.deinit(gpa);
         translator.global_scope.deinit();
         translator.pattern_list.deinit(gpa);
@@ -476,6 +482,10 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             if (field.name_tok == 0) {
                 field_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{unnamed_field_count});
                 unnamed_field_count += 1;
+                try t.anonymous_record_field_names.put(t.gpa, .{
+                    .parent = base.qt,
+                    .field = field.qt,
+                }, field_name);
             }
             const field_type = t.transType(scope, field.qt, field_loc) catch |err| switch (err) {
                 error.UnsupportedType => {
@@ -647,6 +657,7 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
 fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!void {
     var name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
+    const is_static_local = !toplevel and variable.storage_class == .static;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
     if (!toplevel) {
         if (variable.storage_class == .@"extern") {
@@ -707,7 +718,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             .is_threadlocal = variable.thread_local,
             .linksection_string = null,
             .alignment = alignment,
-            .name = name,
+            .name = if (is_static_local) Scope.Block.static_inner_name else name,
             .type = type_node,
             .init = init_node,
         },
@@ -718,6 +729,9 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     } else {
         if (variable.storage_class == .@"extern") {
             node = try ZigTag.extern_local_var.create(t.arena, .{ .name = name, .init = node });
+        }
+        if (variable.storage_class == .static) {
+            node = try ZigTag.static_local_var.create(t.arena, .{ .name = name, .init = node });
         }
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -1625,6 +1639,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .shl_expr => |shl_expr| try t.transShiftExpr(scope, shl_expr, .shl),
         .shr_expr => |shr_expr| try t.transShiftExpr(scope, shr_expr, .shr),
 
+        .member_access_expr => |member_access| return t.transMemberAccess(scope, .normal, member_access, used),
+        .member_access_ptr_expr => |member_access| return t.transMemberAccess(scope, .ptr, member_access, used),
+
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
 
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
@@ -2150,6 +2167,35 @@ fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin: Node.Binar
     const bitcast_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
 
     return t.createBinOpNode(op_id, lhs_node, bitcast_node);
+}
+
+fn transMemberAccess(
+    t: *Translator,
+    scope: *Scope,
+    kind: enum { normal, ptr },
+    member_access: Node.MemberAccess,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const base_info = switch (kind) {
+        .normal => member_access.base.qt(t.tree),
+        .ptr => member_access.base.qt(t.tree).childType(t.comp),
+    };
+    const record = base_info.getRecord(t.comp).?;
+    const field = record.fields[member_access.member_index];
+    const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
+        .parent = base_info.base(t.comp).qt,
+        .field = field.qt,
+    }).? else field.name.lookup(t.comp);
+    const base_node = try t.transExpr(scope, member_access.base, .used);
+    const lhs = switch (kind) {
+        .normal => base_node,
+        .ptr => try ZigTag.deref.create(t.arena, base_node),
+    };
+    const field_access = try ZigTag.field_access.create(t.arena, .{
+        .lhs = lhs,
+        .field_name = field_name,
+    });
+    return t.maybeSuppressResult(used, field_access);
 }
 
 fn transBuiltinCall(
