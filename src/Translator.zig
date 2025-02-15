@@ -367,7 +367,7 @@ fn transTypeDef(t: *Translator, scope: *Scope, typedef_node: Node.Index) Error!v
 
     const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
-        .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(toplevel)] },
+        .base = .{ .tag = if (toplevel) .pub_var_simple else .var_simple },
         .data = .{
             .name = name,
             .init = init_node,
@@ -415,7 +415,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
     const container_kind_name = @tagName(container_kind);
 
     var bare_name = record_ty.name.lookup(t.comp);
-    const is_unnamed = bare_name[0] == '(';
+    var is_unnamed = false;
     var name = bare_name;
 
     if (t.unnamed_typedefs.get(base.qt)) |typedef_name| {
@@ -424,6 +424,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
     } else {
         if (record_ty.isAnonymous(t.comp)) {
             bare_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{t.getMangle()});
+            is_unnamed = true;
         }
         name = try std.fmt.allocPrint(t.arena, "{s}_{s}", .{ container_kind_name, bare_name });
         if (toplevel and !is_unnamed) {
@@ -535,7 +536,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
 
     const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
-        .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(is_pub)] },
+        .base = .{ .tag = if (is_pub) .pub_var_simple else .var_simple },
         .data = .{
             .name = name,
             .init = init_node,
@@ -749,14 +750,15 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
 
     var bare_name = enum_ty.name.lookup(t.comp);
-    const is_unnamed = bare_name[0] == '(';
+    var is_unnamed = false;
     var name = bare_name;
     if (t.unnamed_typedefs.get(base.qt)) |typedef_name| {
         bare_name = typedef_name;
         name = typedef_name;
     } else {
-        if (is_unnamed) {
+        if (bare_name[0] == '(') {
             bare_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{t.getMangle()});
+            is_unnamed = true;
         }
         name = try std.fmt.allocPrint(t.arena, "enum_{s}", .{bare_name});
     }
@@ -805,7 +807,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
     const is_pub = toplevel and !is_unnamed;
     const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
     payload.* = .{
-        .base = .{ .tag = ([2]ZigTag{ .var_simple, .pub_var_simple })[@intFromBool(is_pub)] },
+        .base = .{ .tag = if (is_pub) .pub_var_simple else .var_simple },
         .data = .{
             .init = enum_type_node,
             .name = name,

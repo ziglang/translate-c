@@ -15,7 +15,7 @@ void foo(outer *x) { x->y = x->x; }
 //     x: u8,
 //     unnamed_0: struct_unnamed_2,
 // };
-// const outer = extern struct {
+// pub const outer = extern struct {
 //     unnamed_0: union_unnamed_1 = @import("std").mem.zeroes(union_unnamed_1),
 // };
 // pub export fn foo(arg_x: [*c]outer) void {
