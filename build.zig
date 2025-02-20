@@ -92,6 +92,16 @@ pub fn build(b: *std.Build) !void {
     }
 
     const translate_exes = blk: {
+        // Use symlink to get the include dir in the exe path without installing both.
+        const aro_include = aro.path("include").getPath3(b, null);
+        const resolved_aro_include = b.pathResolve(&.{ aro_include.root_dir.path orelse ".", aro_include.sub_path });
+
+        const dest_dir = b.cache_root.join(b.allocator, &.{"include"}) catch @panic("oom");
+        std.fs.symLinkAbsolute(resolved_aro_include, dest_dir, .{ .is_directory = true }) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => @panic("failed to symlink"),
+        };
+
         var exes: [4]*std.Build.Step.Compile = undefined;
         for (optimization_modes, 0..) |mode, i| {
             const test_aro = b.dependency("aro", .{
@@ -138,6 +148,7 @@ pub fn build(b: *std.Build) !void {
 
             const run_macro_tests = b.addRunArtifact(macro_tests);
             macro_test_step.dependOn(&run_macro_tests.step);
+            macro_test_step.dependOn(&translate_exe.step);
         }
         test_step.dependOn(macro_test_step);
     }

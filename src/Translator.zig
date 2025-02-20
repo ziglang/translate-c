@@ -766,7 +766,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
         bare_name = typedef_name;
         name = typedef_name;
     } else {
-        if (bare_name[0] == '(') {
+        if (enum_ty.isAnonymous(t.comp)) {
             bare_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{t.getMangle()});
             is_unnamed = true;
         }
@@ -957,7 +957,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         },
         .@"enum" => |enum_ty| {
             var trans_scope = scope;
-            const is_anonymous = enum_ty.name.lookup(t.comp)[0] == '(';
+            const is_anonymous = enum_ty.isAnonymous(t.comp);
             if (is_anonymous) {
                 if (t.weak_global_names.contains(enum_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }

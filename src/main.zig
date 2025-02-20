@@ -31,10 +31,20 @@ pub fn main() u8 {
     };
     defer comp.deinit();
 
-    var driver: aro.Driver = .{ .comp = &comp };
+    const exe_name = std.fs.selfExePathAlloc(gpa) catch {
+        std.debug.print("unable to find translate-c executable path\n", .{});
+        if (fast_exit) process.exit(1);
+        return 1;
+    };
+    defer gpa.free(exe_name);
+
+    var driver: aro.Driver = .{ .comp = &comp, .aro_name = exe_name };
     defer driver.deinit();
 
-    translate(&driver, args) catch |err| switch (err) {
+    var toolchain: aro.Toolchain = .{ .driver = &driver, .arena = arena, .filesystem = .{ .real = comp.cwd } };
+    defer toolchain.deinit();
+
+    translate(&driver, &toolchain, args) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory translating\n", .{});
             if (fast_exit) process.exit(1);
@@ -50,7 +60,7 @@ pub fn main() u8 {
     return @intFromBool(comp.diagnostics.errors != 0);
 }
 
-fn translate(d: *aro.Driver, args: []const []const u8) !void {
+fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void {
     const gpa = d.comp.gpa;
 
     var macro_buf = std.ArrayList(u8).init(gpa);
@@ -63,6 +73,15 @@ fn translate(d: *aro.Driver, args: []const []const u8) !void {
         return d.fatal("expected exactly one input file", .{});
     }
     const source = d.inputs.items[0];
+
+    tc.discover() catch |er| switch (er) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.TooManyMultilibs => return d.fatal("found more than one multilib with the same priority", .{}),
+    };
+    tc.defineSystemIncludes() catch |er| switch (er) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.AroIncludeNotFound => return d.fatal("unable to find Aro builtin headers", .{}),
+    };
 
     const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines, null) catch |err| switch (err) {
         error.StreamTooLong => return d.fatal("builtin macro source exceeded max size", .{}),
