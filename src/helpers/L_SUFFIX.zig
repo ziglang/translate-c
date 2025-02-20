@@ -9,7 +9,7 @@ fn L_SUFFIX_ReturnType(comptime number: anytype) type {
         else => @compileError("Invalid value for L suffix"),
     }
 }
-pub fn L_SUFFIX(comptime number: anytype) __helpers.L_SUFFIX_ReturnType(number) {
+pub fn L_SUFFIX(comptime number: anytype) @This().L_SUFFIX_ReturnType(number) {
     switch (@typeInfo(@TypeOf(number))) {
         .int, .comptime_int => return __helpers.promoteIntLiteral(c_long, number, .decimal),
         .float, .comptime_float => @compileError("TODO: c_longdouble initialization from comptime_float not supported"),

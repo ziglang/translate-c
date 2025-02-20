@@ -1,10 +1,10 @@
 .{
     .name = "translate-c",
-    .version = "0.14.0-dev.2179+f2b81f57f",
+    .version = "0.0.0",
     .dependencies = .{
         .aro = .{
-            .url = "git+https://github.com/Vexu/arocc.git#2d6a1daa1a244af750c364fe3cc0845a4e2feb35",
-            .hash = "1220d973f5c528ba15fa67cebd60be721c79b8cfb0f9e8f99fb7526b8f9af3e160c6",
+            .url = "git+https://github.com/Vexu/arocc#1f3d0646b6d970a591d9c29e895040f3a9ab8899",
+            .hash = "1220c1c35f44b3c4fa1195b91aa2df0e23193a23e7801992ba2a1bd5a7084ec5a547",
         },
     },
     .paths = .{
