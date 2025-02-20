@@ -5,12 +5,12 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     if (A == f64 or B == f64) return f64;
     if (A == f32 or B == f32) return f32;
 
-    const A_Promoted = PromotedIntType(A);
-    const B_Promoted = PromotedIntType(B);
+    const A_Promoted = @This().PromotedIntType(A);
+    const B_Promoted = @This().PromotedIntType(B);
     const std = @import("std");
     comptime {
-        std.debug.assert(integerRank(A_Promoted) >= integerRank(c_int));
-        std.debug.assert(integerRank(B_Promoted) >= integerRank(c_int));
+        std.debug.assert(@This().integerRank(A_Promoted) >= @This().integerRank(c_int));
+        std.debug.assert(@This().integerRank(B_Promoted) >= @This().integerRank(c_int));
     }
 
     if (A_Promoted == B_Promoted) return A_Promoted;
@@ -19,17 +19,17 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     const b_signed = @typeInfo(B_Promoted).int.signedness == .signed;
 
     if (a_signed == b_signed) {
-        return if (integerRank(A_Promoted) > integerRank(B_Promoted)) A_Promoted else B_Promoted;
+        return if (@This().integerRank(A_Promoted) > @This().integerRank(B_Promoted)) A_Promoted else B_Promoted;
     }
 
     const SignedType = if (a_signed) A_Promoted else B_Promoted;
     const UnsignedType = if (!a_signed) A_Promoted else B_Promoted;
 
-    if (integerRank(UnsignedType) >= integerRank(SignedType)) return UnsignedType;
+    if (@This().integerRank(UnsignedType) >= @This().integerRank(SignedType)) return UnsignedType;
 
     if (std.math.maxInt(SignedType) >= std.math.maxInt(UnsignedType)) return SignedType;
 
-    return ToUnsigned(SignedType);
+    return @This().ToUnsigned(SignedType);
 }
 
 /// Integer promotion described in C11 6.3.1.1.2
