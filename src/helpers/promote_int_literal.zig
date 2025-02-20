@@ -2,14 +2,14 @@
 pub fn promoteIntLiteral(
     comptime SuffixType: type,
     comptime number: comptime_int,
-    comptime base: CIntLiteralBase,
-) PromoteIntLiteralReturnType(SuffixType, number, base) {
+    comptime base: @This().CIntLiteralBase,
+) @This().PromoteIntLiteralReturnType(SuffixType, number, base) {
     return number;
 }
 
 const CIntLiteralBase = enum { decimal, octal, hex };
 
-fn PromoteIntLiteralReturnType(comptime SuffixType: type, comptime number: comptime_int, comptime base: CIntLiteralBase) type {
+fn PromoteIntLiteralReturnType(comptime SuffixType: type, comptime number: comptime_int, comptime base: @This().CIntLiteralBase) type {
     const signed_decimal = [_]type{ c_int, c_long, c_longlong, c_ulonglong };
     const signed_oct_hex = [_]type{ c_int, c_uint, c_long, c_ulong, c_longlong, c_ulonglong };
     const unsigned = [_]type{ c_uint, c_ulong, c_ulonglong };

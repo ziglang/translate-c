@@ -5,12 +5,12 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     if (A == f64 or B == f64) return f64;
     if (A == f32 or B == f32) return f32;
 
-    const A_Promoted = PromotedIntType(A);
-    const B_Promoted = PromotedIntType(B);
+    const A_Promoted = @This().PromotedIntType(A);
+    const B_Promoted = @This().PromotedIntType(B);
     const std = @import("std");
     comptime {
-        std.debug.assert(integerRank(A_Promoted) >= integerRank(c_int));
-        std.debug.assert(integerRank(B_Promoted) >= integerRank(c_int));
+        std.debug.assert(@This().integerRank(A_Promoted) >= @This().integerRank(c_int));
+        std.debug.assert(@This().integerRank(B_Promoted) >= @This().integerRank(c_int));
     }
 
     if (A_Promoted == B_Promoted) return A_Promoted;
@@ -19,31 +19,40 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     const b_signed = @typeInfo(B_Promoted).int.signedness == .signed;
 
     if (a_signed == b_signed) {
-        return if (integerRank(A_Promoted) > integerRank(B_Promoted)) A_Promoted else B_Promoted;
+        return if (@This().integerRank(A_Promoted) > @This().integerRank(B_Promoted)) A_Promoted else B_Promoted;
     }
 
     const SignedType = if (a_signed) A_Promoted else B_Promoted;
     const UnsignedType = if (!a_signed) A_Promoted else B_Promoted;
 
-    if (integerRank(UnsignedType) >= integerRank(SignedType)) return UnsignedType;
+    if (@This().integerRank(UnsignedType) >= @This().integerRank(SignedType)) return UnsignedType;
 
     if (std.math.maxInt(SignedType) >= std.math.maxInt(UnsignedType)) return SignedType;
 
-    return ToUnsigned(SignedType);
+    return @This().ToUnsigned(SignedType);
 }
 
 /// Integer promotion described in C11 6.3.1.1.2
 fn PromotedIntType(comptime T: type) type {
     return switch (T) {
-        bool, u8, i8, c_short => c_int,
+        bool, c_short => c_int,
         c_ushort => if (@sizeOf(c_ushort) == @sizeOf(c_int)) c_uint else c_int,
         c_int, c_uint, c_long, c_ulong, c_longlong, c_ulonglong => T,
-        else => if (T == comptime_int) {
-            @compileError("Cannot promote `" ++ @typeName(T) ++ "`; a fixed-size number type is required");
-        } else if (@typeInfo(T) == .int) {
-            @compileError("Cannot promote `" ++ @typeName(T) ++ "`; a C ABI type is required");
-        } else {
-            @compileError("Attempted to promote invalid type `" ++ @typeName(T) ++ "`");
+        else => switch (@typeInfo(T)) {
+            .comptime_int => @compileError("Cannot promote `" ++ @typeName(T) ++ "`; a fixed-size number type is required"),
+            // promote to c_int if it can represent all values of T
+            .int => |int_info| if (int_info.bits < @bitSizeOf(c_int))
+                c_int
+                // otherwise, restore the original C type
+            else if (int_info.bits == @bitSizeOf(c_int))
+                if (int_info.signedness == .unsigned) c_uint else c_int
+            else if (int_info.bits <= @bitSizeOf(c_long))
+                if (int_info.signedness == .unsigned) c_ulong else c_long
+            else if (int_info.bits <= @bitSizeOf(c_longlong))
+                if (int_info.signedness == .unsigned) c_ulonglong else c_longlong
+            else
+                @compileError("Cannot promote `" ++ @typeName(T) ++ "`; a C ABI type is required"),
+            else => @compileError("Attempted to promote invalid type `" ++ @typeName(T) ++ "`"),
         },
     };
 }
