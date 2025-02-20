@@ -5,12 +5,12 @@ const math = std.math;
 
 /// When using `splitSource` have dependencies that also need to be rendered.
 pub const sources = struct {
-    pub const ArithmeticConversion = @embedFile("helpers/arithmetic_conversion.zig");
+    pub const ArithmeticConversion = splitSource("helpers/arithmetic_conversion.zig");
     pub const cast = @embedFile("helpers/cast.zig");
     pub const div = splitSource("helpers/div.zig");
     pub const FlexibleArrayType = @embedFile("helpers/flexible_asrray_type.zig");
     pub const rem = splitSource("helpers/rem.zig");
-    pub const promoteIntLiteral = @embedFile("helpers/promote_int_literal.zig");
+    pub const promoteIntLiteral = splitSource("helpers/promote_int_literal.zig");
     pub const shuffleVectorIndex = @embedFile("helpers/shuffle_vector_index.zig");
     pub const signedRemainder = @embedFile("helpers/signed_remainder.zig");
     pub const sizeof = @embedFile("helpers/sizeof.zig");

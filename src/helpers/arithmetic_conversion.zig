@@ -1,3 +1,5 @@
+const __helpers = @This();
+// BEGIN_SOURCE
 /// "Usual arithmetic conversions" from C11 standard 6.3.1.8
 pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     if (A == c_longdouble or B == c_longdouble) return c_longdouble;
@@ -5,12 +7,12 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     if (A == f64 or B == f64) return f64;
     if (A == f32 or B == f32) return f32;
 
-    const A_Promoted = PromotedIntType(A);
-    const B_Promoted = PromotedIntType(B);
+    const A_Promoted = __helpers.PromotedIntType(A);
+    const B_Promoted = __helpers.PromotedIntType(B);
     const std = @import("std");
     comptime {
-        std.debug.assert(integerRank(A_Promoted) >= integerRank(c_int));
-        std.debug.assert(integerRank(B_Promoted) >= integerRank(c_int));
+        std.debug.assert(__helpers.integerRank(A_Promoted) >= __helpers.integerRank(c_int));
+        std.debug.assert(__helpers.integerRank(B_Promoted) >= __helpers.integerRank(c_int));
     }
 
     if (A_Promoted == B_Promoted) return A_Promoted;
@@ -19,17 +21,17 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
     const b_signed = @typeInfo(B_Promoted).int.signedness == .signed;
 
     if (a_signed == b_signed) {
-        return if (integerRank(A_Promoted) > integerRank(B_Promoted)) A_Promoted else B_Promoted;
+        return if (__helpers.integerRank(A_Promoted) > __helpers.integerRank(B_Promoted)) A_Promoted else B_Promoted;
     }
 
     const SignedType = if (a_signed) A_Promoted else B_Promoted;
     const UnsignedType = if (!a_signed) A_Promoted else B_Promoted;
 
-    if (integerRank(UnsignedType) >= integerRank(SignedType)) return UnsignedType;
+    if (__helpers.integerRank(UnsignedType) >= __helpers.integerRank(SignedType)) return UnsignedType;
 
     if (std.math.maxInt(SignedType) >= std.math.maxInt(UnsignedType)) return SignedType;
 
-    return ToUnsigned(SignedType);
+    return __helpers.ToUnsigned(SignedType);
 }
 
 /// Integer promotion described in C11 6.3.1.1.2
