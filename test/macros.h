@@ -68,3 +68,22 @@ typedef _Bool uintptr_t;
 #define MACRO_VALUE 0
 typedef long def_type;
 #define BLANK_MACRO_CAST (BLANK_CHILD_MACRO def_type BLANK_CHILD_MACRO)MACRO_VALUE
+
+// Translation helpers should properly avoid ambiguous references
+int ArithmeticConversion;
+int cast;
+int div;
+int FlexibleArrayType;
+int rem;
+int promoteIntLiteral;
+int shuffleVectorIndex;
+int signedRemainder;
+int CAST_OR_CALL;
+int DISCARD;
+int F_SUFFIX;
+int L_SUFFIX;
+int LL_SUFFIX;
+int U_SUFFIX;
+int UL_SUFFIX;
+int ULL_SUFFIX;
+int WL_CONTAINER_OF;

@@ -109,7 +109,7 @@ pub fn build(b: *std.Build) !void {
             test_exe.root_module.addImport("aro", test_aro.module("aro"));
 
             // Ensure that a binary is emitted.
-            _ =  test_exe.getEmittedBin();
+            _ = test_exe.getEmittedBin();
             exes[i] = test_exe;
         }
         break :blk exes[0..optimization_modes.len];
