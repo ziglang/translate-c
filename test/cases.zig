@@ -4,42 +4,16 @@ const TranslateC = @import("../build/TranslateC.zig");
 pub fn addCaseTests(
     b: *std.Build,
     tests_step: *std.Build.Step,
-    optimization_modes: []const std.builtin.Mode,
+    translate_exes: []const *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     skip_translate: bool,
     skip_run_translated: bool,
-    use_llvm: ?bool,
 ) !void {
     const test_translate_step = b.step("test-translate", "Run the C translation tests");
     if (!skip_translate) tests_step.dependOn(test_translate_step);
 
     const test_run_translated_step = b.step("test-run-translated", "Run the Run-Translated-C tests");
     if (!skip_run_translated) tests_step.dependOn(test_run_translated_step);
-
-    const translate_exes = blk: {
-        var exes: [4]*std.Build.Step.Compile = undefined;
-        for (optimization_modes, 0..) |mode, i| {
-            const aro = b.dependency("aro", .{
-                .target = target,
-                .optimize = mode,
-            });
-            const exe = b.addExecutable(.{
-                .name = "translate-c",
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = mode,
-                .use_llvm = use_llvm,
-                .use_lld = use_llvm,
-            });
-            exe.root_module.addImport("aro", aro.module("aro"));
-
-            const install_step = b.addInstallArtifact(exe, .{});
-            test_translate_step.dependOn(&install_step.step);
-            test_run_translated_step.dependOn(&install_step.step);
-            exes[i] = exe;
-        }
-        break :blk exes[0..optimization_modes.len];
-    };
 
     var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
     defer dir.close();
