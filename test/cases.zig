@@ -15,6 +15,11 @@ pub fn addCaseTests(
     const test_run_translated_step = b.step("test-run-translated", "Run the Run-Translated-C tests");
     if (!skip_run_translated) tests_step.dependOn(test_run_translated_step);
 
+    for (translate_exes) |exe| {
+        test_translate_step.dependOn(&exe.step);
+        test_run_translated_step.dependOn(&exe.step);
+    }
+
     var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
     defer dir.close();
 
