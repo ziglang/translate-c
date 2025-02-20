@@ -92,6 +92,13 @@ pub fn build(b: *std.Build) !void {
     }
 
     const translate_exes = blk: {
+        // TODO is there a better way to do this?
+        const install_dir_step = b.addInstallDirectory(.{
+            .source_dir = aro.path("include"),
+            .install_dir = .prefix,
+            .install_subdir = "../.zig-cache/include",
+        });
+
         var exes: [4]*std.Build.Step.Compile = undefined;
         for (optimization_modes, 0..) |mode, i| {
             const test_aro = b.dependency("aro", .{
@@ -107,6 +114,7 @@ pub fn build(b: *std.Build) !void {
                 .use_lld = use_llvm,
             });
             test_exe.root_module.addImport("aro", test_aro.module("aro"));
+            test_exe.step.dependOn(&install_dir_step.step);
 
             // Ensure that a binary is emitted.
             _ = test_exe.getEmittedBin();
@@ -138,6 +146,7 @@ pub fn build(b: *std.Build) !void {
 
             const run_macro_tests = b.addRunArtifact(macro_tests);
             macro_test_step.dependOn(&run_macro_tests.step);
+            macro_test_step.dependOn(&translate_exe.step);
         }
         test_step.dependOn(macro_test_step);
     }
