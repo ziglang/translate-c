@@ -203,6 +203,16 @@ test "ArithmeticConversion" {
     try Test.checkPromotion(c_uint, c_long, c_long);
 
     try Test.checkPromotion(c_ulong, c_longlong, c_ulonglong);
+
+    // stdint.h
+    try Test.checkPromotion(u8, i8, c_int);
+    try Test.checkPromotion(u16, i16, c_int);
+    try Test.checkPromotion(i32, c_int, c_int);
+    try Test.checkPromotion(u32, c_int, c_uint);
+    try Test.checkPromotion(i64, c_int, c_long);
+    try Test.checkPromotion(u64, c_int, c_ulong);
+    try Test.checkPromotion(isize, c_int, c_long);
+    try Test.checkPromotion(usize, c_int, c_ulong);
 }
 
 const F_SUFFIX = @import("helpers/F_SUFFIX.zig").F_SUFFIX;
