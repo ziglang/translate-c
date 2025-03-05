@@ -1,12 +1,19 @@
 .{
-    .name = "translate-c",
-    .version = "0.14.0-dev.2179+f2b81f57f",
+    .name = .translate_c,
+
+    .version = "0.0.0",
+
+    .fingerprint = 0x1c84f6455a54f043, // Changing this has security and trust implications.
+
+    .minimum_zig_version = "0.14.0",
+
     .dependencies = .{
         .aro = .{
-            .url = "git+https://github.com/Vexu/arocc.git#2d6a1daa1a244af750c364fe3cc0845a4e2feb35",
-            .hash = "1220d973f5c528ba15fa67cebd60be721c79b8cfb0f9e8f99fb7526b8f9af3e160c6",
+            .url = "git+https://github.com/Vexu/arocc#8c6bab43ba351fc045a1d262d8a8da4a11215e37",
+            .hash = "aro-0.0.0-JSD1QrcSJgD8rSGyCmD43r0uho7OM9cCj-MDvbgkiFKs",
         },
     },
+
     .paths = .{
         "build",
         "build.zig",
