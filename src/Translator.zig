@@ -656,17 +656,20 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
 }
 
 fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!void {
-    var name = t.tree.tokSlice(variable.name_tok);
+    const base_name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
-    const is_static_local = !toplevel and variable.storage_class == .static;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
-    if (!toplevel) {
-        if (variable.storage_class == .@"extern") {
-            // Special naming convention for local extern variable wrapper struct
-            name = try std.fmt.allocPrint(t.arena, "{s}_{s}", .{ Scope.Block.extern_inner_prepend, name });
-        }
-        name = try bs.makeMangledName(name);
-    }
+    const name, const use_base_name = blk: {
+        if (toplevel) break :blk .{ base_name, false };
+
+        // Local extern and static variables are wrapped in a struct.
+        const prefix: ?[]const u8 = switch (variable.storage_class) {
+            .@"extern" => Scope.Block.extern_local_prefix,
+            .static => Scope.Block.static_local_prefix,
+            else => null,
+        };
+        break :blk .{ try bs.createMangledName(base_name, false, prefix), prefix != null };
+    };
 
     if (t.typeWasDemotedToOpaque(variable.qt)) {
         if (variable.storage_class != .@"extern") {
@@ -719,7 +722,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             .is_threadlocal = variable.thread_local,
             .linksection_string = null,
             .alignment = alignment,
-            .name = if (is_static_local) Scope.Block.static_inner_name else name,
+            .name = if (use_base_name) base_name else name,
             .type = type_node,
             .init = init_node,
         },
@@ -728,11 +731,8 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     if (toplevel) {
         try t.addTopLevelDecl(name, node);
     } else {
-        if (variable.storage_class == .@"extern") {
-            node = try ZigTag.extern_local_var.create(t.arena, .{ .name = name, .init = node });
-        }
-        if (variable.storage_class == .static) {
-            node = try ZigTag.static_local_var.create(t.arena, .{ .name = name, .init = node });
+        if (use_base_name) {
+            node = try ZigTag.wrapped_local_var.create(t.arena, .{ .name = name, .init = node });
         }
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -1815,6 +1815,10 @@ fn transCastExpr(
                     return try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
                 }
 
+                if (cast.operand.qt(t.tree).arrayLen(t.comp) == null) {
+                    return try t.transExpr(scope, cast.operand, used);
+                }
+
                 const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
                 const ref = try ZigTag.address_of.create(t.arena, sub_expr_node);
                 const align_cast = try ZigTag.align_cast.create(t.arena, ref);
@@ -1885,41 +1889,29 @@ fn transCastExpr(
 
 fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) TransError!ZigNode {
     const name = t.tree.tokSlice(decl_ref.name_tok);
-    const mangled_name = scope.getAlias(name);
+    const maybe_alias = scope.getAlias(name);
+    const mangled_name = maybe_alias orelse name;
 
     const decl = decl_ref.decl.get(t.tree);
-    const decl_is_var = decl == .variable;
-    const potential_local_extern = decl_is_var and decl.variable.storage_class == .@"extern" and scope.id != .root;
-
-    var confirmed_local_extern = false;
-    var ref_expr = val: {
+    const ref_expr = blk: {
         if (decl_ref.qt.is(t.comp, .func)) {
-            break :val try ZigTag.fn_identifier.create(t.arena, mangled_name);
-        } else if (potential_local_extern) {
-            if (scope.getLocalExternAlias(name)) |v| {
-                confirmed_local_extern = true;
-                break :val try ZigTag.identifier.create(t.arena, v);
-            } else {
-                break :val try ZigTag.identifier.create(t.arena, mangled_name);
-            }
-        } else {
-            break :val try ZigTag.identifier.create(t.arena, mangled_name);
+            break :blk try ZigTag.fn_identifier.create(t.arena, mangled_name);
         }
+        const identifier = try ZigTag.identifier.create(t.arena, mangled_name);
+        if (decl == .variable and maybe_alias != null) {
+            switch (decl.variable.storage_class) {
+                .@"extern", .static => {
+                    break :blk try ZigTag.field_access.create(t.arena, .{
+                        .lhs = identifier,
+                        .field_name = name,
+                    });
+                },
+                else => {},
+            }
+        }
+        break :blk identifier;
     };
 
-    if (decl_is_var) {
-        if (decl.variable.storage_class == .static and scope.id != .root) {
-            ref_expr = try ZigTag.field_access.create(t.arena, .{
-                .lhs = ref_expr,
-                .field_name = Scope.Block.static_inner_name,
-            });
-        } else if (confirmed_local_extern) {
-            ref_expr = try ZigTag.field_access.create(t.arena, .{
-                .lhs = ref_expr,
-                .field_name = name, // by necessity, name will always == mangled_name
-            });
-        }
-    }
     scope.skipVariableDiscard(mangled_name);
     return ref_expr;
 }
@@ -2158,7 +2150,9 @@ fn transPtrDiffExpr(t: *Translator, scope: *Scope, bin: Node.Binary) TransError!
 fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag) TransError!ZigNode {
     std.debug.assert(op_id == .add or op_id == .sub);
 
-    const swap_operands = op_id == .add and bin.lhs.qt(t.tree).signedness(t.comp) == .signed;
+    const lhs_qt = bin.lhs.qt(t.tree);
+    const swap_operands = op_id == .add and
+        (lhs_qt.isInt(t.comp) and lhs_qt.signedness(t.comp) == .signed);
 
     const swizzled_lhs = if (swap_operands) bin.rhs else bin.lhs;
     const swizzled_rhs = if (swap_operands) bin.lhs else bin.rhs;

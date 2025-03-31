@@ -10,10 +10,10 @@ static inline void foo() {
 //
 // pub const struct_empty_struct = extern struct {};
 // pub fn foo(...) callconv(.c) void {
-//     const bar = struct {
-//         var static: struct_empty_struct = struct_empty_struct{};
+//     const static_local_bar = struct {
+//         var bar: struct_empty_struct = struct_empty_struct{};
 //     };
-//     _ = &bar;
-//     _ = bar.static;
+//     _ = &static_local_bar;
+//     _ = static_local_bar.bar;
 // }
 // pub const empty_struct = struct_empty_struct;

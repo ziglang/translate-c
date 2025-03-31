@@ -64,15 +64,14 @@ pub const Block = struct {
     return_type: ?aro.QualType = null,
 
     /// C static local variables are wrapped in a block-local struct. The struct
-    /// is named after the (mangled) variable name, the Zig variable within the
-    /// struct itself is given this name.
-    pub const static_inner_name = "static";
+    /// is named `mangle(static_local_ + name)` and the Zig variable within the
+    /// struct keeps the name of the C variable.
+    pub const static_local_prefix = "static_local";
 
-    /// C extern variables declared within a block are wrapped in a block-local
-    /// struct. The struct is named ExternLocal_[variable_name], the Zig variable
-    /// within the struct itself is [variable_name] by necessity since it's an
-    /// extern reference to an existing symbol.
-    pub const extern_inner_prepend = "ExternLocal";
+    /// C extern local variables are wrapped in a block-local struct. The struct
+    /// is named `mangle(extern_local + name)` and the Zig variable within the
+    /// struct keeps the name of the C variable.
+    pub const extern_local_prefix = "extern_local";
 
     pub fn init(t: *Translator, parent: *Scope, labeled: bool) !Block {
         var blk: Block = .{
@@ -123,21 +122,25 @@ pub const Block = struct {
     /// Inserts the returned name into the scope.
     /// The name will not be visible to callers of getAlias.
     pub fn reserveMangledName(block: *Block, name: []const u8) ![]const u8 {
-        return block.createMangledName(name, true);
+        return block.createMangledName(name, true, null);
     }
 
     /// Same as reserveMangledName, but enables the alias immediately.
     pub fn makeMangledName(block: *Block, name: []const u8) ![]const u8 {
-        return block.createMangledName(name, false);
+        return block.createMangledName(name, false, null);
     }
 
-    fn createMangledName(block: *Block, name: []const u8, reservation: bool) ![]const u8 {
+    pub fn createMangledName(block: *Block, name: []const u8, reservation: bool, prefix_opt: ?[]const u8) ![]const u8 {
         const arena = block.translator.arena;
         const name_copy = try arena.dupe(u8, name);
-        var proposed_name = name_copy;
+        const alias_base = if (prefix_opt) |prefix|
+            try std.fmt.allocPrint(arena, "{s}_{s}", .{ prefix, name })
+        else
+            name;
+        var proposed_name = alias_base;
         while (block.contains(proposed_name)) {
             block.mangle_count += 1;
-            proposed_name = try std.fmt.allocPrint(arena, "{s}_{d}", .{ name, block.mangle_count });
+            proposed_name = try std.fmt.allocPrint(arena, "{s}_{d}", .{ alias_base, block.mangle_count });
         }
         const new_mangle = try block.variables.addOne(block.translator.gpa);
         if (reservation) {
@@ -148,30 +151,12 @@ pub const Block = struct {
         return proposed_name;
     }
 
-    fn getAlias(block: *Block, name: []const u8) []const u8 {
+    fn getAlias(block: *Block, name: []const u8) ?[]const u8 {
         for (block.variables.items) |p| {
             if (std.mem.eql(u8, p.name, name))
                 return p.alias;
         }
         return block.base.parent.?.getAlias(name);
-    }
-
-    /// Finds the (potentially) mangled struct name for a locally scoped extern variable given the original declaration name.
-    ///
-    /// Block scoped extern declarations translate to:
-    ///     const MangledStructName = struct {extern [qualifiers] original_extern_variable_name: [type]};
-    /// This finds MangledStructName given original_extern_variable_name for referencing correctly in transDeclRefExpr()
-    fn getLocalExternAlias(block: *Block, name: []const u8) ?[]const u8 {
-        for (block.statements.items) |node| {
-            if (node.tag() == .extern_local_var) {
-                const parent_node = node.castTag(.extern_local_var).?;
-                const init_node = parent_node.data.init.castTag(.var_decl).?;
-                if (std.mem.eql(u8, init_node.data.name, name)) {
-                    return parent_node.data.name;
-                }
-            }
-        }
-        return null;
     }
 
     fn localContains(block: *Block, name: []const u8) bool {
@@ -263,22 +248,11 @@ pub fn findBlockReturnType(inner: *Scope) aro.QualType {
     }
 }
 
-pub fn getAlias(scope: *Scope, name: []const u8) []const u8 {
-    return switch (scope.id) {
-        .root => name,
-        .block => @as(*Block, @fieldParentPtr("base", scope)).getAlias(name),
-        .loop, .do_loop, .condition => scope.parent.?.getAlias(name),
-    };
-}
-
-pub fn getLocalExternAlias(scope: *Scope, name: []const u8) ?[]const u8 {
+pub fn getAlias(scope: *Scope, name: []const u8) ?[]const u8 {
     return switch (scope.id) {
         .root => null,
-        .block => ret: {
-            const block = @as(*Block, @fieldParentPtr("base", scope));
-            break :ret block.getLocalExternAlias(name);
-        },
-        .loop, .do_loop, .condition => scope.parent.?.getLocalExternAlias(name),
+        .block => @as(*Block, @fieldParentPtr("base", scope)).getAlias(name),
+        .loop, .do_loop, .condition => scope.parent.?.getAlias(name),
     };
 }
 

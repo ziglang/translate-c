@@ -11,10 +11,10 @@ int bar(void) {
 //     y: c_int = 0,
 // };
 // pub export fn bar() c_int {
-//     const foo = struct {
-//         var static: struct_FOO = @import("std").mem.zeroes(struct_FOO);
+//     const static_local_foo = struct {
+//         var foo: struct_FOO = @import("std").mem.zeroes(struct_FOO);
 //     };
-//     _ = &foo;
-//     return foo.static.x;
+//     _ = &static_local_foo;
+//     return static_local_foo.foo.x;
 // }
 // pub const FOO = struct_FOO;
