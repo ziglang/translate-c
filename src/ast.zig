@@ -36,7 +36,6 @@ pub const Node = extern union {
         /// "string"[0..end]
         string_slice,
         identifier,
-        fn_identifier,
         @"if",
         /// if (!operand) break;
         if_not_break,
@@ -374,7 +373,6 @@ pub const Node = extern union {
                 .char_literal,
                 .enum_literal,
                 .identifier,
-                .fn_identifier,
                 .warning,
                 .type,
                 => Payload.Value,
@@ -979,15 +977,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         },
         .call => {
             const payload = node.castTag(.call).?.data;
-            // Cosmetic: avoids an unnecessary address_of on most function calls.
-            const lhs = if (payload.lhs.tag() == .fn_identifier)
-                try c.addNode(.{
-                    .tag = .identifier,
-                    .main_token = try c.addIdentifier(payload.lhs.castTag(.fn_identifier).?.data),
-                    .data = undefined,
-                })
-            else
-                try renderNodeGrouped(c, payload.lhs);
+            const lhs = try renderNodeGrouped(c, payload.lhs);
             return renderCall(c, lhs, payload.args);
         },
         .null_literal => return c.addNode(.{
@@ -1124,25 +1114,6 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 .tag = .identifier,
                 .main_token = try c.addIdentifier(payload),
                 .data = undefined,
-            });
-        },
-        .fn_identifier => {
-            // C semantics are that a function identifier has address
-            // value (implicit in stage1, explicit in stage2), except in
-            // the context of an address_of, which is handled there.
-            const payload = node.castTag(.fn_identifier).?.data;
-            const tok = try c.addToken(.ampersand, "&");
-            const arg = try c.addNode(.{
-                .tag = .identifier,
-                .main_token = try c.addIdentifier(payload),
-                .data = undefined,
-            });
-            return c.addNode(.{
-                .tag = .address_of,
-                .main_token = tok,
-                .data = .{
-                    .node = arg,
-                },
             });
         },
         .float_literal => {
@@ -1548,14 +1519,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             const payload = node.castTag(.address_of).?.data;
 
             const ampersand = try c.addToken(.ampersand, "&");
-            const base = if (payload.tag() == .fn_identifier)
-                try c.addNode(.{
-                    .tag = .identifier,
-                    .main_token = try c.addIdentifier(payload.castTag(.fn_identifier).?.data),
-                    .data = undefined,
-                })
-            else
-                try renderNodeGrouped(c, payload);
+            const base = try renderNodeGrouped(c, payload);
             return c.addNode(.{
                 .tag = .address_of,
                 .main_token = ampersand,
@@ -2445,7 +2409,6 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .char_literal,
         .enum_literal,
         .identifier,
-        .fn_identifier,
         .field_access,
         .ptr_cast,
         .type,

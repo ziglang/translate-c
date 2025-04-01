@@ -1894,9 +1894,6 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) Trans
 
     const decl = decl_ref.decl.get(t.tree);
     const ref_expr = blk: {
-        if (decl_ref.qt.is(t.comp, .func)) {
-            break :blk try ZigTag.fn_identifier.create(t.arena, mangled_name);
-        }
         const identifier = try ZigTag.identifier.create(t.arena, mangled_name);
         if (decl == .variable and maybe_alias != null) {
             switch (decl.variable.storage_class) {
@@ -2228,7 +2225,7 @@ fn transBuiltinCall(
     }
 
     const res = try ZigTag.call.create(t.arena, .{
-        .lhs = try ZigTag.fn_identifier.create(t.arena, builtin_name),
+        .lhs = try ZigTag.identifier.create(t.arena, builtin_name),
         .args = arg_nodes,
     });
     if (call.qt.is(t.comp, .void)) return res;
