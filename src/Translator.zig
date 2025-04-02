@@ -1645,6 +1645,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .member_access_ptr_expr => |member_access| return t.transMemberAccess(scope, .ptr, member_access, used),
 
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
+        .call_expr => |call| return t.transCall(scope, call, used),
 
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
@@ -1839,6 +1840,13 @@ fn transCastExpr(
             },
             .pointer_to_bool => {
                 const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+
+                // Special case function pointers as @intFromPtr(expr) != 0
+                if (cast.operand.qt(t.tree).get(t.comp, .pointer)) |ptr_ty| if (ptr_ty.child.is(t.comp, .func)) {
+                    const int_from_ptr = try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
+                    return ZigTag.not_equal.create(t.arena, .{ .lhs = int_from_ptr, .rhs = ZigTag.zero_literal.init() });
+                };
+
                 return ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.null_literal.init() });
             },
             .bool_to_int => {
@@ -2226,6 +2234,73 @@ fn transBuiltinCall(
 
     const res = try ZigTag.call.create(t.arena, .{
         .lhs = try ZigTag.identifier.create(t.arena, builtin_name),
+        .args = arg_nodes,
+    });
+    if (call.qt.is(t.comp, .void)) return res;
+    return t.maybeSuppressResult(used, res);
+}
+
+fn transCall(
+    t: *Translator,
+    scope: *Scope,
+    call: Node.Call,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const raw_fn_expr = try t.transExpr(scope, call.callee, .used);
+    const fn_expr = blk: {
+        loop: switch (call.callee.get(t.tree)) {
+            .paren_expr => |paren_expr| {
+                continue :loop paren_expr.operand.get(t.tree);
+            },
+            .decl_ref_expr => |decl_ref| {
+                if (decl_ref.qt.is(t.comp, .func)) break :blk raw_fn_expr;
+            },
+            .cast => |cast| {
+                if (cast.kind == .function_to_pointer) {
+                    continue :loop cast.operand.get(t.tree);
+                }
+            },
+            .deref_expr, .addr_of_expr => |un| {
+                continue :loop un.operand.get(t.tree);
+            },
+            .generic_expr => |generic| {
+                continue :loop generic.chosen.get(t.tree);
+            },
+            else => {},
+        }
+        break :blk try ZigTag.unwrap.create(t.arena, raw_fn_expr);
+    };
+
+    const callee_qt = call.callee.qt(t.tree);
+    const maybe_ptr_ty = callee_qt.get(t.comp, .pointer);
+    const func_qt = if (maybe_ptr_ty) |ptr| ptr.child else callee_qt;
+    const func_ty = func_qt.get(t.comp, .func).?;
+
+    const arg_nodes = try t.arena.alloc(ZigNode, call.args.len);
+    for (call.args, arg_nodes, 0..) |c_arg, *zig_arg, i| {
+        if (i < func_ty.params.len) {
+            zig_arg.* = try t.transExprCoercing(scope, c_arg, .used);
+
+            if (zig_arg.isBoolRes() and !func_ty.params[i].qt.is(t.comp, .bool)) {
+                // In C the result type of a boolean expression is int. If this result is passed as
+                // an argument to a function whose parameter is also int, there is no cast. Therefore
+                // in Zig we'll need to cast it from bool to u1 (which will safely coerce to c_int).
+                zig_arg.* = try ZigTag.int_from_bool.create(t.arena, zig_arg.*);
+            }
+        } else {
+            zig_arg.* = try t.transExpr(scope, c_arg, .used);
+
+            if (zig_arg.isBoolRes()) {
+                // Same as above but now we don't have a result type.
+                const u1_node = try ZigTag.int_from_bool.create(t.arena, zig_arg.*);
+                const c_int_node = try ZigTag.type.create(t.arena, "c_int");
+                zig_arg.* = try ZigTag.as.create(t.arena, .{ .lhs = c_int_node, .rhs = u1_node });
+            }
+        }
+    }
+
+    const res = try ZigTag.call.create(t.arena, .{
+        .lhs = fn_expr,
         .args = arg_nodes,
     });
     if (call.qt.is(t.comp, .void)) return res;
