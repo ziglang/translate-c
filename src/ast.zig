@@ -54,7 +54,7 @@ pub const Node = extern union {
         call,
         var_decl,
         /// const name = struct { init }
-        wrapped_local_var,
+        wrapped_local,
         /// var name = init.*
         mut_str,
         func,
@@ -392,7 +392,7 @@ pub const Node = extern union {
                 .c_pointer, .single_pointer => Payload.Pointer,
                 .array_type, .null_sentinel_array_type => Payload.Array,
                 .arg_redecl, .alias, .fail_decl => Payload.ArgRedecl,
-                .var_simple, .pub_var_simple, .wrapped_local_var, .mut_str => Payload.SimpleVarDecl,
+                .var_simple, .pub_var_simple, .wrapped_local, .mut_str => Payload.SimpleVarDecl,
                 .enum_constant => Payload.EnumConstant,
                 .array_filler => Payload.ArrayFiller,
                 .pub_inline_fn => Payload.PubInlineFn,
@@ -1244,8 +1244,8 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 },
             });
         },
-        .wrapped_local_var => {
-            const payload = node.castTag(.wrapped_local_var).?.data;
+        .wrapped_local => {
+            const payload = node.castTag(.wrapped_local).?.data;
 
             const const_tok = try c.addToken(.keyword_const, "const");
             _ = try c.addIdentifier(payload.name);
@@ -2344,7 +2344,7 @@ fn renderNullSentinelArrayType(c: *Context, len: usize, elem_type: Node) !NodeIn
 fn addSemicolonIfNeeded(c: *Context, node: Node) !void {
     switch (node.tag()) {
         .warning => unreachable,
-        .var_decl, .var_simple, .arg_redecl, .alias, .block, .empty_block, .block_single, .@"switch", .wrapped_local_var, .mut_str => {},
+        .var_decl, .var_simple, .arg_redecl, .alias, .block, .empty_block, .block_single, .@"switch", .wrapped_local, .mut_str => {},
         .while_true => {
             const payload = node.castTag(.while_true).?.data;
             return addSemicolonIfNotBlock(c, payload);
@@ -2432,7 +2432,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .offset_of,
         .shuffle,
         .builtin_extern,
-        .wrapped_local_var,
+        .wrapped_local,
         .mut_str,
         .helper_call,
         .byte_swap,

@@ -311,7 +311,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
         => return,
 
         .fn_proto, .fn_def => {
-            try t.transFnDecl(decl, true);
+            try t.transFnDecl(scope, decl);
         },
 
         .variable => |variable| {
@@ -556,7 +556,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
     }
 }
 
-fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!void {
+fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!void {
     const raw_qt = fn_decl_node.qt(t.tree);
     const func_ty = raw_qt.get(t.comp, .func).?;
     const name_tok: TokenIndex, const body_node: ?Node.Index, const is_export_or_inline = switch (fn_decl_node.get(t.tree)) {
@@ -564,6 +564,8 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
         .fn_proto => |fn_proto| .{ fn_proto.name_tok, null, fn_proto.@"inline" or fn_proto.static },
         else => unreachable,
     };
+
+    const is_pub = scope.id == .root;
 
     // TODO if this is a prototype for which a definition exists,
     // that definition should be translated instead.
@@ -600,6 +602,14 @@ fn transFnDecl(t: *Translator, fn_decl_node: Node.Index, is_pub: bool) Error!voi
     };
 
     if (!has_body) {
+        if (scope.id != .root) {
+            const bs: *Scope.Block = try scope.findBlockScope(t);
+            const mangled_name = try bs.createMangledName(fn_name, false, Scope.Block.extern_local_prefix);
+            const wrapped = try ZigTag.wrapped_local.create(t.arena, .{ .name = mangled_name, .init = proto_node });
+            try scope.appendNode(wrapped);
+            try bs.discardVariable(mangled_name);
+            return;
+        }
         return t.addTopLevelDecl(fn_name, proto_node);
     }
     const proto_payload = proto_node.castTag(.func).?;
@@ -732,7 +742,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         try t.addTopLevelDecl(name, node);
     } else {
         if (use_base_name) {
-            node = try ZigTag.wrapped_local_var.create(t.arena, .{ .name = name, .init = node });
+            node = try ZigTag.wrapped_local.create(t.arena, .{ .name = name, .init = node });
         }
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -1289,7 +1299,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             return ZigTag.declaration.init();
         },
         .fn_proto => {
-            try t.transFnDecl(stmt, true);
+            try t.transFnDecl(scope, stmt);
             return ZigTag.declaration.init();
         },
         .variable => |variable| {
@@ -1903,6 +1913,12 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) Trans
     const decl = decl_ref.decl.get(t.tree);
     const ref_expr = blk: {
         const identifier = try ZigTag.identifier.create(t.arena, mangled_name);
+        if (decl_ref.qt.is(t.comp, .func) and maybe_alias != null) {
+            break :blk try ZigTag.field_access.create(t.arena, .{
+                .lhs = identifier,
+                .field_name = name,
+            });
+        }
         if (decl == .variable and maybe_alias != null) {
             switch (decl.variable.storage_class) {
                 .@"extern", .static => {

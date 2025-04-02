@@ -4,9 +4,11 @@ int foo(void) {
 }
 
 // translate
-// expect=fail
 //
-// pub extern fn bar(c_int, c_int) c_int;
 // pub export fn foo() c_int {
-//     return bar(@as(c_int, 1), @as(c_int, 2));
+//     const extern_local_bar = struct {
+//         extern fn bar(c_int, c_int) c_int;
+//     };
+//     _ = &extern_local_bar;
+//     return extern_local_bar.bar(1, 2);
 // }
