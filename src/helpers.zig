@@ -5,12 +5,12 @@ const math = std.math;
 
 /// When using `splitSource` have dependencies that also need to be rendered.
 pub const sources = struct {
-    pub const ArithmeticConversion = @embedFile("helpers/arithmetic_conversion.zig");
+    pub const ArithmeticConversion = splitSource("helpers/arithmetic_conversion.zig");
     pub const cast = @embedFile("helpers/cast.zig");
     pub const div = splitSource("helpers/div.zig");
     pub const FlexibleArrayType = @embedFile("helpers/flexible_asrray_type.zig");
     pub const rem = splitSource("helpers/rem.zig");
-    pub const promoteIntLiteral = @embedFile("helpers/promote_int_literal.zig");
+    pub const promoteIntLiteral = splitSource("helpers/promote_int_literal.zig");
     pub const shuffleVectorIndex = @embedFile("helpers/shuffle_vector_index.zig");
     pub const signedRemainder = @embedFile("helpers/signed_remainder.zig");
     pub const sizeof = @embedFile("helpers/sizeof.zig");
@@ -203,6 +203,16 @@ test "ArithmeticConversion" {
     try Test.checkPromotion(c_uint, c_long, c_long);
 
     try Test.checkPromotion(c_ulong, c_longlong, c_ulonglong);
+
+    // stdint.h
+    try Test.checkPromotion(u8, i8, c_int);
+    try Test.checkPromotion(u16, i16, c_int);
+    try Test.checkPromotion(i32, c_int, c_int);
+    try Test.checkPromotion(u32, c_int, c_uint);
+    try Test.checkPromotion(i64, c_int, c_long);
+    try Test.checkPromotion(u64, c_int, c_ulong);
+    try Test.checkPromotion(isize, c_int, c_long);
+    try Test.checkPromotion(usize, c_int, c_ulong);
 }
 
 const F_SUFFIX = @import("helpers/F_SUFFIX.zig").F_SUFFIX;

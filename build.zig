@@ -91,13 +91,74 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(unit_test_step);
     }
 
+    const translate_exes = blk: {
+        // Use symlink to get the include dir in the exe path without installing both.
+        const aro_include = aro.path("include").getPath3(b, null);
+        const resolved_aro_include = b.pathResolve(&.{ aro_include.root_dir.path orelse ".", aro_include.sub_path });
+
+        const dest_dir = b.cache_root.join(b.allocator, &.{"include"}) catch @panic("oom");
+        std.fs.symLinkAbsolute(resolved_aro_include, dest_dir, .{ .is_directory = true }) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => @panic("failed to symlink"),
+        };
+
+        var exes: [4]*std.Build.Step.Compile = undefined;
+        for (optimization_modes, 0..) |mode, i| {
+            const test_aro = b.dependency("aro", .{
+                .target = target,
+                .optimize = mode,
+            });
+            const test_exe = b.addExecutable(.{
+                .name = "translate-c",
+                .root_source_file = b.path("src/main.zig"),
+                .target = target,
+                .optimize = mode,
+                .use_llvm = use_llvm,
+                .use_lld = use_llvm,
+            });
+            test_exe.root_module.addImport("aro", test_aro.module("aro"));
+
+            // Ensure that a binary is emitted.
+            _ = test_exe.getEmittedBin();
+            exes[i] = test_exe;
+        }
+        break :blk exes[0..optimization_modes.len];
+    };
+
+    {
+        const macro_test_step = b.step("test-macros", "Run unit tests");
+        for (optimization_modes, translate_exes) |mode, translate_exe| {
+            const macro_tests = b.addTest(.{
+                .root_source_file = b.path("test/macros.zig"),
+                .target = target,
+                .optimize = mode,
+            });
+            macro_tests.root_module.addImport("macros.h", TranslateC.create(b, .{
+                .root_source_file = b.path("test/macros.h"),
+                .target = target,
+                .optimize = mode,
+                .translate_c_exe = translate_exe,
+            }).createModule());
+            macro_tests.root_module.addImport("macros_not_utf8.h", TranslateC.create(b, .{
+                .root_source_file = b.path("test/macros_not_utf8.h"),
+                .target = target,
+                .optimize = mode,
+                .translate_c_exe = translate_exe,
+            }).createModule());
+
+            const run_macro_tests = b.addRunArtifact(macro_tests);
+            macro_test_step.dependOn(&run_macro_tests.step);
+            macro_test_step.dependOn(&translate_exe.step);
+        }
+        test_step.dependOn(macro_test_step);
+    }
+
     try @import("test/cases.zig").addCaseTests(
         b,
         test_step,
-        optimization_modes,
+        translate_exes,
         target,
         skip_translate,
         skip_run_translated,
-        use_llvm,
     );
 }

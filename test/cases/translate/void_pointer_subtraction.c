@@ -4,7 +4,6 @@ ptrdiff_t sub_ptr(void *a, void *b) {
 }
 
 // translate
-// expect=fail
 // target=x86_64-linux
 //
 // pub export fn sub_ptr(arg_a: ?*anyopaque, arg_b: ?*anyopaque) ptrdiff_t {
