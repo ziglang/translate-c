@@ -66,6 +66,16 @@ test "cast" {
     const FnPtr = ?*align(1) const fn (*anyopaque) void;
     try testing.expect(cast(FnPtr, 0) == @as(FnPtr, @ptrFromInt(@as(usize, 0))));
     try testing.expect(cast(FnPtr, foo) == @as(FnPtr, @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))))));
+
+    const complexFunction = struct {
+        fn f(_: ?*anyopaque, _: c_uint, _: ?*const fn (?*anyopaque) callconv(.c) c_uint, _: ?*anyopaque, _: c_uint, _: [*c]c_uint) callconv(.c) usize {
+            return 0;
+        }
+    }.f;
+
+    const SDL_FunctionPointer = ?*const fn () callconv(.c) void;
+    const fn_ptr = cast(SDL_FunctionPointer, complexFunction);
+    try testing.expect(fn_ptr != null);
 }
 
 const sizeof = @import("helpers/sizeof.zig").sizeof;
