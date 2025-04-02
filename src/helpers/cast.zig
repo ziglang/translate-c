@@ -84,6 +84,9 @@ fn castToPtr(comptime DestType: type, comptime SourceType: type, target: anytype
         .pointer => {
             return castPtr(DestType, target);
         },
+        .@"fn" => {
+            return castPtr(DestType, &target);
+        },
         .optional => |target_opt| {
             if (@typeInfo(target_opt.child) == .pointer) {
                 return castPtr(DestType, target);
