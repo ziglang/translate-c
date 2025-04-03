@@ -6,7 +6,6 @@ void deref(struct my_struct *s) {
 }
 
 // translate
-// expect=fail
 //
 // warning: cannot dereference opaque type
 //

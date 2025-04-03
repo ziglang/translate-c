@@ -12,16 +12,15 @@ void bar(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {}
 // pub export fn baz() c_int {
 //     return 0;
 // }
 // pub export fn bar() void {
-//     var f: ?*const fn () callconv(.c) void = &foo;
+//     var f: ?*const fn () callconv(.c) void = foo;
 //     _ = &f;
-//     var b: ?*const fn () callconv(.c) c_int = &baz;
+//     var b: ?*const fn () callconv(.c) c_int = baz;
 //     _ = &b;
 //     f.?();
 //     f.?();

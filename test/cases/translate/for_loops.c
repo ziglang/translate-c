@@ -7,7 +7,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     {
@@ -18,13 +17,9 @@ void foo() {
 //         while ((i + @as(c_int, 2)) != 0) : (i = 2) {
 //             var a: c_int = 2;
 //             _ = &a;
-//             _ = blk: {
-//                 _ = blk_1: {
-//                     a = 6;
-//                     break :blk_1 @as(c_int, 5);
-//                 };
-//                 break :blk @as(c_int, 7);
-//             };
+//             a = 6;
+//             _ = 5;
+//             _ = 7;
 //         }
 //     }
 //     var i: u8 = 2;

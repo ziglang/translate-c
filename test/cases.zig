@@ -177,14 +177,13 @@ fn trailingSplit(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scala
     defer buf.deinit();
 
     while (it.next()) |line| {
-        if (line.len < 3) continue;
-        const trimmed = line[3..];
-        if (trimmed.len == 0) {
+        if (line.len <= 3) {
             if (buf.items.len != 0) {
                 try out.append(try buf.toOwnedSlice());
             }
             continue;
         }
+        const trimmed = line[3..];
         if (buf.items.len != 0) try buf.append('\n');
         try buf.appendSlice(trimmed);
     }

@@ -5,7 +5,6 @@ void foo(int *(baz)(void)) {
 }
 
 // translate
-// expect=fail
 //
 // pub fn bar() callconv(.c) void {}
 // pub export fn foo(arg_baz: ?*const fn () callconv(.c) [*c]c_int) void {

@@ -1495,8 +1495,7 @@ fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransErro
     defer if (block_scope) |*bs| bs.deinit();
 
     switch (for_stmt.init) {
-        // TODO decls.len should always be > 1
-        .decls => |decls| if (decls.len > 1) {
+        .decls => |decls| {
             block_scope = try Scope.Block.init(t, scope, false);
             loop_scope.parent = &block_scope.?.base;
             for (decls) |decl| {
@@ -1506,7 +1505,7 @@ fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransErro
         .expr => |maybe_init| if (maybe_init) |init| {
             block_scope = try Scope.Block.init(t, scope, false);
             loop_scope.parent = &block_scope.?.base;
-            const init_node = try t.transStmt(&loop_scope, init);
+            const init_node = try t.transStmt(&block_scope.?.base, init);
             try loop_scope.appendNode(init_node);
         },
     }
