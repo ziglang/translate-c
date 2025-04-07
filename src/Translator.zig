@@ -15,6 +15,7 @@ const ZigNode = ast.Node;
 const ZigTag = ZigNode.Tag;
 const builtins = @import("builtins.zig");
 const helpers = @import("helpers.zig");
+const MacroTranslator = @import("MacroTranslator.zig");
 const Scope = @import("Scope.zig");
 
 pub const Error = std.mem.Allocator.Error;
@@ -28,6 +29,9 @@ const Translator = @This();
 tree: *const Tree,
 /// The compilation corresponding to the AST.
 comp: *aro.Compilation,
+/// The Preprocessor that produced the source for `tree`.
+/// TODO make const
+pp: *aro.Preprocessor,
 
 gpa: mem.Allocator,
 arena: mem.Allocator,
@@ -79,14 +83,13 @@ fn getMangle(t: *Translator) u32 {
     return t.mangle_count;
 }
 
-/// Convert an aro TokenIndex to a 'file:line:column' string
-fn locStr(t: *Translator, tok_idx: TokenIndex) ![]const u8 {
-    const token_loc = t.tree.tokens.items(.loc)[tok_idx];
-    const source = t.comp.getSource(token_loc.id);
-    const line_col = source.lineCol(token_loc);
+/// Convert an `aro.Source.Location` to a 'file:line:column' string.
+fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
+    const source = t.comp.getSource(loc.id);
+    const line_col = source.lineCol(loc);
     const filename = source.path;
 
-    const line = source.physicalLine(token_loc);
+    const line = source.physicalLine(loc);
     const col = line_col.col;
 
     return std.fmt.allocPrint(t.arena, "{s}:{d}:{d}", .{ filename, line, col });
@@ -117,7 +120,12 @@ fn fail(
 }
 
 // TODO audit usages, not valid in function scope
-fn failDecl(t: *Translator, loc: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
+pub fn failDecl(t: *Translator, tok_idx: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
+    const loc = t.tree.tokens.items(.loc)[tok_idx];
+    return t.failDeclExtra(loc, name, format, args);
+}
+
+pub fn failDeclExtra(t: *Translator, loc: aro.Source.Location, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
@@ -127,7 +135,8 @@ fn failDecl(t: *Translator, loc: TokenIndex, name: []const u8, comptime format: 
     try t.global_scope.nodes.append(t.gpa, try ZigTag.warning.create(t.arena, location_comment));
 }
 
-fn warn(t: *Translator, scope: *Scope, loc: TokenIndex, comptime format: []const u8, args: anytype) !void {
+fn warn(t: *Translator, scope: *Scope, tok_idx: TokenIndex, comptime format: []const u8, args: anytype) !void {
+    const loc = t.tree.tokens.items(.loc)[tok_idx];
     const str = try t.locStr(loc);
     const value = try std.fmt.allocPrint(t.arena, "// {s}: warning: " ++ format, .{str} ++ args);
     try scope.appendNode(try ZigTag.warning.create(t.arena, value));
@@ -136,6 +145,7 @@ fn warn(t: *Translator, scope: *Scope, loc: TokenIndex, comptime format: []const
 pub fn translate(
     gpa: mem.Allocator,
     comp: *aro.Compilation,
+    pp: *aro.Preprocessor,
     tree: *const aro.Tree,
 ) ![]u8 {
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
@@ -148,6 +158,7 @@ pub fn translate(
         .alias_list = .empty,
         .global_scope = try arena.create(Scope.Root),
         .comp = comp,
+        .pp = pp,
         .tree = tree,
     };
     translator.global_scope.* = Scope.Root.init(&translator);
@@ -165,13 +176,14 @@ pub fn translate(
         translator.needed_helpers.deinit(gpa);
     }
 
-    try prepopulateGlobalNameTable(&translator);
-    try transTopLevelDecls(&translator);
+    try translator.prepopulateGlobalNameTable();
+    try translator.transTopLevelDecls();
+    try translator.transMacros();
 
     for (translator.alias_list.items) |alias| {
         if (!translator.global_scope.sym_table.contains(alias.alias)) {
             const node = try ZigTag.alias.create(arena, .{ .actual = alias.alias, .mangled = alias.name });
-            try addTopLevelDecl(&translator, alias.alias, node);
+            try translator.addTopLevelDecl(alias.alias, node);
         }
     }
 
@@ -2677,6 +2689,89 @@ fn usizeCastForWrappingPtrArithmetic(t: *Translator, node: ZigNode) TransError!Z
 // Macro translation
 // =================
 
+fn transMacros(t: *Translator) !void {
+    var tok_list = std.ArrayList(CToken).init(t.gpa);
+    defer tok_list.deinit();
+
+    var it = t.pp.defines.iterator();
+    while (it.next()) |define_kv| {
+        const name = define_kv.key_ptr.*;
+        const macro = define_kv.value_ptr.*;
+
+        if (t.global_scope.containsNow(name)) {
+            continue;
+        }
+
+        // TODO bug in Aro
+        const params = if (macro.is_func) macro.params else &.{};
+        if (t.checkTranslatableMacro(macro.tokens, params)) |err| switch (err) {
+            .undefined_identifier => |ident| return t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
+            .invalid_arg_usage => |ident| return t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
+        };
+
+        tok_list.items.len = 0;
+        try tok_list.ensureUnusedCapacity(macro.tokens.len);
+        for (macro.tokens) |tok| {
+            switch (tok.id) {
+                .invalid => continue,
+                .whitespace => continue,
+                else => {},
+            }
+            tok_list.appendAssumeCapacity(tok);
+        }
+
+        var macro_translator: MacroTranslator = .{
+            .t = t,
+            .tokens = tok_list.items,
+            .name = name,
+            .macro = macro,
+        };
+
+        const res = if (macro.is_func)
+            macro_translator.transFnMacro()
+        else
+            macro_translator.transMacro();
+        res catch |err| switch (err) {
+            error.ParseError => continue,
+            error.OutOfMemory => |e| return e,
+        };
+    }
+}
+
+const MacroTranslateError = union(enum) {
+    undefined_identifier: []const u8,
+    invalid_arg_usage: []const u8,
+};
+
+fn checkTranslatableMacro(t: *Translator, tokens: []const CToken, params: []const []const u8) ?MacroTranslateError {
+    var last_is_type_kw = false;
+    var i: usize = 0;
+    while (i < tokens.len) : (i += 1) {
+        const token = tokens[i];
+        switch (token.id) {
+            .period, .arrow => i += 1, // skip next token since field identifiers can be unknown
+            .keyword_struct, .keyword_union, .keyword_enum => if (!last_is_type_kw) {
+                last_is_type_kw = true;
+                continue;
+            },
+            .identifier, .extended_identifier => {
+                const identifier = t.pp.tokSlice(token);
+                const is_param = for (params) |param| {
+                    if (mem.eql(u8, identifier, param)) break true;
+                } else false;
+                if (is_param and last_is_type_kw) {
+                    return .{ .invalid_arg_usage = identifier };
+                }
+                if (!t.global_scope.contains(identifier) and !builtins.map.has(identifier) and !is_param) {
+                    return .{ .undefined_identifier = identifier };
+                }
+            },
+            else => {},
+        }
+        last_is_type_kw = false;
+    }
+    return null;
+}
 
 fn getContainer(t: *Translator, node: ZigNode) ?ZigNode {
     switch (node.tag()) {

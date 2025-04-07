@@ -211,12 +211,12 @@ pub const Root = struct {
 
     /// Check if the global scope contains this name, without looking into the "future", e.g.
     /// ignore the preprocessed decl and macro names.
-    fn containsNow(root: *Root, name: []const u8) bool {
+    pub fn containsNow(root: *Root, name: []const u8) bool {
         return root.sym_table.contains(name);
     }
 
     /// Check if the global scope contains the name, includes all decls that haven't been translated yet.
-    fn contains(root: *Root, name: []const u8) bool {
+    pub fn contains(root: *Root, name: []const u8) bool {
         return root.containsNow(name) or root.translator.global_names.contains(name) or root.translator.weak_global_names.contains(name);
     }
 };
