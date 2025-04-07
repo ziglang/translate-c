@@ -16,4 +16,5 @@ static inline void foo() {
 //     _ = &static_local_bar;
 //     _ = static_local_bar.bar;
 // }
+//
 // pub const empty_struct = struct_empty_struct;

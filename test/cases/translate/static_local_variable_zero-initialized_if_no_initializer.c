@@ -17,4 +17,5 @@ int bar(void) {
 //     _ = &static_local_foo;
 //     return static_local_foo.foo.x;
 // }
+//
 // pub const FOO = struct_FOO;

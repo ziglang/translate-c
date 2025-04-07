@@ -21,4 +21,5 @@ void foo(void) {
 //     _ = a.b;
 //     _ = c.*.b;
 // }
+//
 // pub const Foo = struct_Foo;
