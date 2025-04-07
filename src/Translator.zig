@@ -1695,6 +1695,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .array_init_expr => |array_init| return t.transArrayInit(scope, array_init, used),
         .union_init_expr => |union_init| return t.transUnionInit(scope, union_init, used),
         .struct_init_expr => |struct_init| return t.transStructInit(scope, struct_init, used),
+
+        .sizeof_expr => |sizeof| try t.transTypeInfo(scope, .sizeof, sizeof),
+        .alignof_expr => |alignof| try t.transTypeInfo(scope, .alignof, alignof),
+
         else => {
             if (t.tree.value_map.get(expr)) |val| {
                 // TODO handle other values
@@ -2591,6 +2595,28 @@ fn transStructInit(
         .inits = field_inits,
     });
     return container_init;
+}
+
+fn transTypeInfo(
+    t: *Translator,
+    scope: *Scope,
+    op: ZigTag,
+    typeinfo: Node.TypeInfo,
+) TransError!ZigNode {
+    const operand = operand: {
+        if (typeinfo.expr) |expr| {
+            const operand = try t.transExpr(scope, expr, .used);
+            break :operand try ZigTag.typeof.create(t.arena, operand);
+        }
+        break :operand try t.transType(scope, typeinfo.operand_qt, typeinfo.op_tok);
+    };
+
+    const payload = try t.arena.create(ast.Payload.UnOp);
+    payload.* = .{
+        .base = .{ .tag = op },
+        .data = operand,
+    };
+    return ZigNode.initPayload(&payload.base);
 }
 
 // =====================
