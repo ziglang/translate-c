@@ -1,5 +1,6 @@
 void foo() {
-  unsigned int a[10], i = 0;
+  unsigned int a[10];
+  _Bool i = 0;
   a[i] = 0;
 }
 
@@ -8,7 +9,7 @@ void foo() {
 // pub export fn foo() void {
 //     var a: [10]c_uint = undefined;
 //     _ = &a;
-//     var i: c_uint = 0;
+//     var i: bool = @as(c_int, 0) != 0;
 //     _ = &i;
-//     a[i] = 0;
+//     a[@intFromBool(i)] = 0;
 // }

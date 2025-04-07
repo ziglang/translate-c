@@ -138,7 +138,7 @@ pub fn failDeclExtra(t: *Translator, loc: aro.Source.Location, name: []const u8,
 fn warn(t: *Translator, scope: *Scope, tok_idx: TokenIndex, comptime format: []const u8, args: anytype) !void {
     const loc = t.tree.tokens.items(.loc)[tok_idx];
     const str = try t.locStr(loc);
-    const value = try std.fmt.allocPrint(t.arena, "// {s}: warning: " ++ format, .{str} ++ args);
+    const value = try std.fmt.allocPrint(t.arena, "\n// {s}: warning: " ++ format, .{str} ++ args);
     try scope.appendNode(try ZigTag.warning.create(t.arena, value));
 }
 
@@ -1660,8 +1660,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .shl_expr => |shl_expr| try t.transShiftExpr(scope, shl_expr, .shl),
         .shr_expr => |shr_expr| try t.transShiftExpr(scope, shr_expr, .shr),
 
-        .member_access_expr => |member_access| return t.transMemberAccess(scope, .normal, member_access, used),
-        .member_access_ptr_expr => |member_access| return t.transMemberAccess(scope, .ptr, member_access, used),
+        .member_access_expr => |member_access| try t.transMemberAccess(scope, .normal, member_access),
+        .member_access_ptr_expr => |member_access| try t.transMemberAccess(scope, .ptr, member_access),
+        .array_access_expr => |array_access| try t.transArrayAccess(scope, array_access),
 
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
         .call_expr => |call| return t.transCall(scope, call, used),
@@ -2200,7 +2201,6 @@ fn transMemberAccess(
     scope: *Scope,
     kind: enum { normal, ptr },
     member_access: Node.MemberAccess,
-    used: ResultUsed,
 ) TransError!ZigNode {
     const base_info = switch (kind) {
         .normal => member_access.base.qt(t.tree),
@@ -2217,11 +2217,64 @@ fn transMemberAccess(
         .normal => base_node,
         .ptr => try ZigTag.deref.create(t.arena, base_node),
     };
-    const field_access = try ZigTag.field_access.create(t.arena, .{
+    return ZigTag.field_access.create(t.arena, .{
         .lhs = lhs,
         .field_name = field_name,
     });
-    return t.maybeSuppressResult(used, field_access);
+}
+
+fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAccess) TransError!ZigNode {
+    // Unwrap the base statement if it's an array decayed to a bare pointer type
+    // so that we index the array itself
+    const base = base: {
+        const base = array_access.base.get(t.tree);
+        if (base != .cast) break :base array_access.base;
+        if (base.cast.kind != .array_to_pointer) break :base array_access.base;
+        break :base base.cast.operand;
+    };
+
+    const base_node = try t.transExpr(scope, base, .used);
+    const index = index: {
+        const index = try t.transExpr(scope, array_access.index, .used);
+        const index_qt = array_access.index.qt(t.tree);
+        const maybe_bigger_than_usize = switch (index_qt.base(t.comp).type) {
+            .bool => {
+                break :index try ZigTag.int_from_bool.create(t.arena, index);
+            },
+            .int => |int| switch (int) {
+                .long_long, .ulong_long, .int128, .uint128 => true,
+                else => false,
+            },
+            .bit_int => |bit_int| bit_int.bits > t.comp.target.ptrBitWidth(),
+            else => unreachable,
+        };
+
+        const is_nonnegative_int_literal = if (t.tree.value_map.get(array_access.index)) |val|
+            val.compare(.gte, .zero, t.comp)
+        else
+            false;
+        const is_signed = index_qt.signedness(t.comp) == .signed;
+
+        if (is_signed and !is_nonnegative_int_literal) {
+            // First cast to `isize` to get proper sign extension and
+            // then @bitCast to `usize` to satisfy the compiler.
+            const index_isize = try ZigTag.as.create(t.arena, .{
+                .lhs = try ZigTag.type.create(t.arena, "isize"),
+                .rhs = try ZigTag.int_cast.create(t.arena, index),
+            });
+            break :index try ZigTag.bit_cast.create(t.arena, index_isize);
+        }
+
+        if (maybe_bigger_than_usize) {
+            break :index try ZigTag.int_cast.create(t.arena, index);
+        }
+        break :index index;
+    };
+
+    return ZigTag.array_access.create(t.arena, .{
+        .lhs = base_node,
+        .rhs = index,
+    });
 }
 
 fn transBuiltinCall(

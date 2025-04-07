@@ -913,7 +913,6 @@ fn renderNodeOpt(c: *Context, node: Node) Allocator.Error!?NodeIndex {
     switch (node.tag()) {
         .warning => {
             const payload = node.castTag(.warning).?.data;
-            try c.buf.append('\n');
             try c.buf.appendSlice(payload);
             try c.buf.append('\n');
             return null;

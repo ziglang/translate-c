@@ -1,15 +1,14 @@
 void foo() {
-  long long a[10], i = 0;
+  unsigned long long a[10], i = 0;
   a[i] = 0;
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
-//     var a: [10]c_longlong = undefined;
+//     var a: [10]c_ulonglong = undefined;
 //     _ = &a;
-//     var i: c_longlong = 0;
+//     var i: c_ulonglong = 0;
 //     _ = &i;
-//     a[@as(usize, @intCast(i))] = 0;
+//     a[@intCast(i)] = 0;
 // }
