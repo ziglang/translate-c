@@ -729,23 +729,19 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     };
 
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
-    const payload = try t.arena.create(ast.Payload.VarDecl);
-    payload.* = .{
-        .base = .{ .tag = ZigTag.var_decl },
-        .data = .{
-            .is_pub = toplevel,
-            .is_const = variable.qt.@"const",
-            .is_extern = variable.storage_class == .@"extern",
-            .is_export = toplevel and variable.storage_class == .auto,
-            .is_threadlocal = variable.thread_local,
-            .linksection_string = null,
-            .alignment = alignment,
-            .name = if (use_base_name) base_name else name,
-            .type = type_node,
-            .init = init_node,
-        },
-    };
-    var node = ZigNode.initPayload(&payload.base);
+    var node = try ZigTag.var_decl.create(t.arena, .{
+        .is_pub = toplevel,
+        .is_const = variable.qt.@"const",
+        .is_extern = variable.storage_class == .@"extern",
+        .is_export = toplevel and variable.storage_class == .auto,
+        .is_threadlocal = variable.thread_local,
+        .linksection_string = null,
+        .alignment = alignment,
+        .name = if (use_base_name) base_name else name,
+        .type = type_node,
+        .init = init_node,
+    });
+
     if (toplevel) {
         try t.addTopLevelDecl(name, node);
     } else {
@@ -1694,10 +1690,24 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
             break :res try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
         },
+        .bool_literal => res: {
+            const val = t.tree.value_map.get(expr).?;
+            break :res if (val.toBool(t.comp))
+                ZigTag.true_literal.init()
+            else
+                ZigTag.false_literal.init();
+        },
+        .nullptr_literal => ZigTag.null_literal.init(),
+        .imaginary_literal => |literal| {
+            return t.fail(error.UnsupportedTranslation, literal.op_tok, "TODO complex numbers", .{});
+        },
+        .compound_literal_expr => |literal| return t.transCompoundLiteral(scope, literal, used),
+
         .default_init_expr => |default_init| return t.transDefaultInit(scope, default_init, used, .with_as),
         .array_init_expr => |array_init| return t.transArrayInit(scope, array_init, used),
         .union_init_expr => |union_init| return t.transUnionInit(scope, union_init, used),
         .struct_init_expr => |struct_init| return t.transStructInit(scope, struct_init, used),
+        .array_filler_expr => unreachable,
 
         .sizeof_expr => |sizeof| try t.transTypeInfo(scope, .sizeof, sizeof),
         .alignof_expr => |alignof| try t.transTypeInfo(scope, .alignof, alignof),
@@ -1724,8 +1734,16 @@ fn transExprCoercing(t: *Translator, scope: *Scope, expr: Node.Index, used: Resu
         .int_literal => return t.transIntLiteral(scope, expr, used, .no_as),
         .char_literal => return t.transCharLiteral(scope, expr, used, .no_as),
         .float_literal => return t.transFloatLiteral(scope, expr, used, .no_as),
-        .cast => |cast| return t.transCastExpr(scope, cast, used, .no_as),
+        .cast => |cast| switch (cast.kind) {
+            .lval_to_rval, .no_op => return t.transExprCoercing(scope, cast.operand, used),
+            else => return t.transCastExpr(scope, cast, used, .no_as),
+        },
         .default_init_expr => |default_init| return try t.transDefaultInit(scope, default_init, used, .no_as),
+        .compound_literal_expr => |literal| {
+            if (!literal.thread_local and literal.storage_class != .static) {
+                return t.transExprCoercing(scope, literal.initializer, used);
+            }
+        },
         else => {},
     }
 
@@ -2558,6 +2576,67 @@ fn transFloatLiteral(
         .rhs = float_lit_node,
     });
     return t.maybeSuppressResult(used, as_node);
+}
+
+fn transCompoundLiteral(
+    t: *Translator,
+    scope: *Scope,
+    literal: Node.CompoundLiteral,
+    used: ResultUsed,
+) TransError!ZigNode {
+    if (used == .unused) {
+        return t.transExpr(scope, literal.initializer, .unused);
+    }
+
+    // TODO taking a reference to a compound literal should result in a mutable
+    // pointer (unless the literal is const).
+
+    const initializer = try t.transExprCoercing(scope, literal.initializer, .used);
+    const ty = try t.transType(scope, literal.qt, literal.l_paren_tok);
+    if (!literal.thread_local and literal.storage_class != .static) {
+        // In the simple case a compound literal can be translated
+        // simply as `@as(type, initializer)`.
+        return ZigTag.as.create(t.arena, .{ .lhs = ty, .rhs = initializer });
+    }
+
+    // Otherwise static or thread local compound literals are translated as
+    // a reference to a variable wrapped in a struct.
+
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    const tmp = try block_scope.reserveMangledName("tmp");
+    const wrapped_name = "compound_literal";
+
+    // const tmp = struct { var compound_literal = initializer };
+    const temp_decl = try ZigTag.var_decl.create(t.arena, .{
+        .is_pub = false,
+        .is_const = literal.qt.@"const",
+        .is_extern = false,
+        .is_export = false,
+        .is_threadlocal = literal.thread_local,
+        .linksection_string = null,
+        .alignment = null,
+        .name = wrapped_name,
+        .type = ty,
+        .init = initializer,
+    });
+    const wrapped = try ZigTag.wrapped_local.create(t.arena, .{ .name = tmp, .init = temp_decl });
+    try block_scope.statements.append(t.gpa, wrapped);
+
+    // break :blk tmp.compound_literal
+    const static_tmp_ident = try ZigTag.identifier.create(t.arena, tmp);
+    const field_access = try ZigTag.field_access.create(t.arena, .{
+        .lhs = static_tmp_ident,
+        .field_name = wrapped_name,
+    });
+    const break_node = try ZigTag.break_val.create(t.arena, .{
+        .label = block_scope.label,
+        .val = field_access,
+    });
+    try block_scope.statements.append(t.gpa, break_node);
+
+    return block_scope.complete();
 }
 
 fn transDefaultInit(
