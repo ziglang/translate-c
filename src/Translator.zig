@@ -1668,6 +1668,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .call_expr => |call| return t.transCall(scope, call, used),
 
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
+        .binary_cond_expr => |conditional| return t.transBinaryCondExpr(scope, conditional, used),
+        .cond_dummy_expr => unreachable,
+
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
         .assign_expr => |assign_expr| return t.transAssignExpr(scope, assign_expr, used),
         .pre_inc_expr => |un| return t.transIncDecExpr(scope, un, .pre, .inc, used),
@@ -1989,7 +1992,12 @@ fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag
     return t.createBinOpNode(op_id, lhs, rhs_casted);
 }
 
-fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, used: ResultUsed) TransError!ZigNode {
+fn transCondExpr(
+    t: *Translator,
+    scope: *Scope,
+    conditional: Node.Conditional,
+    used: ResultUsed,
+) TransError!ZigNode {
     var cond_scope: Scope.Condition = .{
         .base = .{
             .parent = scope,
@@ -1997,19 +2005,95 @@ fn transCondExpr(t: *Translator, scope: *Scope, cond_expr: Node.Conditional, use
         },
     };
     defer cond_scope.deinit();
-    const cond = try t.transBoolExpr(&cond_scope.base, cond_expr.cond);
 
-    var then_body = try t.transExprCoercing(scope, cond_expr.then_expr, used);
-    if (then_body.isBoolRes() and !cond_expr.qt.is(t.comp, .bool)) {
+    const res_is_bool = conditional.qt.is(t.comp, .bool);
+    const cond = try t.transBoolExpr(&cond_scope.base, conditional.cond);
+
+    var then_body = try t.transExprCoercing(scope, conditional.then_expr, used);
+    if (!res_is_bool and then_body.isBoolRes()) {
         then_body = try ZigTag.int_from_bool.create(t.arena, then_body);
     }
 
-    var else_body = try t.transExprCoercing(scope, cond_expr.else_expr, used);
-    if (else_body.isBoolRes() and !cond_expr.qt.is(t.comp, .bool)) {
+    var else_body = try t.transExprCoercing(scope, conditional.else_expr, used);
+    if (!res_is_bool and else_body.isBoolRes()) {
         else_body = try ZigTag.int_from_bool.create(t.arena, else_body);
     }
 
+    // The `ResultUsed` is forwarded to both branches so no need to suppress the result here.
     return ZigTag.@"if".create(t.arena, .{ .cond = cond, .then = then_body, .@"else" = else_body });
+}
+
+fn transBinaryCondExpr(
+    t: *Translator,
+    scope: *Scope,
+    conditional: Node.Conditional,
+    used: ResultUsed,
+) TransError!ZigNode {
+    // GNU extension of the ternary operator where the middle expression is
+    // omitted, the condition itself is returned if it evaluates to true.
+
+    if (used == .unused) {
+        // Result unused so this can be translated as
+        // if (condition) else_expr;
+        var cond_scope: Scope.Condition = .{
+            .base = .{
+                .parent = scope,
+                .id = .condition,
+            },
+        };
+        defer cond_scope.deinit();
+
+        return ZigTag.@"if".create(t.arena, .{
+            .cond = try t.transBoolExpr(&cond_scope.base, conditional.cond),
+            .then = try t.transExpr(scope, conditional.else_expr, .unused),
+            .@"else" = null,
+        });
+    }
+
+    const res_is_bool = conditional.qt.is(t.comp, .bool);
+    // c:   (condition)?:(else_expr)
+    // zig: (blk: {
+    //          const _cond_temp = (condition);
+    //          break :blk if (_cond_temp) _cond_temp else (else_expr);
+    //      })
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    const cond_temp = try block_scope.reserveMangledName("cond_temp");
+    const init_node = try t.transExpr(&block_scope.base, conditional.cond, .used);
+    const temp_decl = try ZigTag.var_simple.create(t.arena, .{ .name = cond_temp, .init = init_node });
+    try block_scope.statements.append(t.gpa, temp_decl);
+
+    var cond_scope: Scope.Condition = .{
+        .base = .{
+            .parent = &block_scope.base,
+            .id = .condition,
+        },
+    };
+    defer cond_scope.deinit();
+
+    const cond_ident = try ZigTag.identifier.create(t.arena, cond_temp);
+    const cond_node = try t.finishBoolExpr(conditional.cond.qt(t.tree), cond_ident);
+    var then_body = cond_ident;
+    if (!res_is_bool and init_node.isBoolRes()) {
+        then_body = try ZigTag.int_from_bool.create(t.arena, then_body);
+    }
+
+    var else_body = try t.transExpr(&block_scope.base, conditional.else_expr, .used);
+    if (!res_is_bool and else_body.isBoolRes()) {
+        else_body = try ZigTag.int_from_bool.create(t.arena, else_body);
+    }
+    const if_node = try ZigTag.@"if".create(t.arena, .{
+        .cond = cond_node,
+        .then = then_body,
+        .@"else" = else_body,
+    });
+    const break_node = try ZigTag.break_val.create(t.arena, .{
+        .label = block_scope.label,
+        .val = if_node,
+    });
+    try block_scope.statements.append(t.gpa, break_node);
+    return block_scope.complete();
 }
 
 fn transCommaExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: ResultUsed) TransError!ZigNode {

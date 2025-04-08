@@ -921,6 +921,20 @@ fn renderNodeOpt(c: *Context, node: Node) Allocator.Error!?NodeIndex {
             const payload = node.castTag(.discard).?.data;
             if (payload.should_skip) return null;
 
+            return try renderNode(c, node);
+        },
+        else => return try renderNode(c, node),
+    }
+}
+
+fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
+    switch (node.tag()) {
+        .declaration => unreachable,
+        .warning => unreachable,
+        .discard => {
+            const payload = node.castTag(.discard).?.data;
+            std.debug.assert(!payload.should_skip);
+
             const lhs = try c.addNode(.{
                 .tag = .identifier,
                 .main_token = try c.addToken(.identifier, "_"),
@@ -951,15 +965,6 @@ fn renderNodeOpt(c: *Context, node: Node) Allocator.Error!?NodeIndex {
                 });
             }
         },
-        else => return try renderNode(c, node),
-    }
-}
-
-fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
-    switch (node.tag()) {
-        .declaration => unreachable,
-        .warning => unreachable,
-        .discard => unreachable,
         .std_mem_zeroes => {
             const payload = node.castTag(.std_mem_zeroes).?.data;
             const import_node = try renderStdImport(c, &.{ "mem", "zeroes" });

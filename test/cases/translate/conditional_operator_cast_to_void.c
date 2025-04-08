@@ -5,7 +5,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub extern fn bar(...) c_int;
 // pub export fn foo() void {
