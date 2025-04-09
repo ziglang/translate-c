@@ -4,7 +4,6 @@ void foo() {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
 //     var n: c_int = undefined;
