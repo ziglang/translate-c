@@ -19,8 +19,7 @@ pub const ParseError = Error || error{ParseError};
 const MacroTranslator = @This();
 
 t: *Translator,
-// TODO make Preprocessor.Macro pub
-macro: @FieldType(@FieldType(aro.Preprocessor, "defines").KV, "value"),
+macro: aro.Preprocessor.Macro,
 name: []const u8,
 
 tokens: []const CToken,

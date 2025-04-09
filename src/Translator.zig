@@ -30,8 +30,7 @@ tree: *const Tree,
 /// The compilation corresponding to the AST.
 comp: *aro.Compilation,
 /// The Preprocessor that produced the source for `tree`.
-/// TODO make const
-pp: *aro.Preprocessor,
+pp: *const aro.Preprocessor,
 
 gpa: mem.Allocator,
 arena: mem.Allocator,
@@ -145,7 +144,7 @@ fn warn(t: *Translator, scope: *Scope, tok_idx: TokenIndex, comptime format: []c
 pub fn translate(
     gpa: mem.Allocator,
     comp: *aro.Compilation,
-    pp: *aro.Preprocessor,
+    pp: *const aro.Preprocessor,
     tree: *const aro.Tree,
 ) ![]u8 {
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
