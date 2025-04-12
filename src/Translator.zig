@@ -1567,6 +1567,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .bool_not_expr => |bool_not_expr| try ZigTag.not.create(t.arena, try t.transBoolExpr(scope, bool_not_expr.operand)),
         .bit_not_expr => |bit_not_expr| try ZigTag.bit_not.create(t.arena, try t.transExpr(scope, bit_not_expr.operand, .used)),
+        .plus_expr => |plus_expr| return t.transExpr(scope, plus_expr.operand, used),
         .negate_expr => |negate_expr| res: {
             const operand_qt = negate_expr.operand.qt(t.tree);
             if (!t.typeHasWrappingOverflow(operand_qt)) {
@@ -1659,9 +1660,20 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .member_access_ptr_expr => |member_access| try t.transMemberAccess(scope, .ptr, member_access),
         .array_access_expr => |array_access| try t.transArrayAccess(scope, array_access),
 
+        .builtin_ref => unreachable,
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
         .call_expr => |call| return t.transCall(scope, call, used),
 
+        .builtin_types_compatible_p => |compatible| blk: {
+            const lhs = try t.transType(scope, compatible.lhs, compatible.builtin_tok);
+            const rhs = try t.transType(scope, compatible.rhs, compatible.builtin_tok);
+
+            break :blk try ZigTag.equal.create(t.arena, .{
+                .lhs = lhs,
+                .rhs = rhs,
+            });
+        },
+        .builtin_choose_expr => |choose| return t.transCondExpr(scope, choose, used),
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
         .binary_cond_expr => |conditional| return t.transBinaryCondExpr(scope, conditional, used),
         .cond_dummy_expr => unreachable,
@@ -1731,18 +1743,52 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .sizeof_expr => |sizeof| try t.transTypeInfo(scope, .sizeof, sizeof),
         .alignof_expr => |alignof| try t.transTypeInfo(scope, .alignof, alignof),
 
-        else => {
-            if (t.tree.value_map.get(expr)) |val| {
-                // TODO handle other values
-                const int = try t.createIntNode(val);
-                const as_node = try ZigTag.as.create(t.arena, .{
-                    .lhs = try t.transType(undefined, qt, undefined),
-                    .rhs = int,
-                });
-                return t.maybeSuppressResult(used, as_node);
-            }
-            unreachable; // Not an expression.
+        .imag_expr, .real_expr => |un| {
+            return t.fail(error.UnsupportedTranslation, un.op_tok, "TODO complex numbers", .{});
         },
+        .addr_of_label => |addr_of_label| {
+            return t.fail(error.UnsupportedTranslation, addr_of_label.label_tok, "TODO computed goto", .{});
+        },
+
+        .generic_expr => |generic| return t.transExpr(scope, generic.chosen, used),
+        .generic_association_expr => unreachable,
+        .generic_default_expr => unreachable,
+
+        .stmt_expr => |stmt_expr| return t.transStmtExpr(scope, stmt_expr, used),
+
+        .compound_stmt,
+        .static_assert,
+        .return_stmt,
+        .null_stmt,
+        .if_stmt,
+        .while_stmt,
+        .do_while_stmt,
+        .for_stmt,
+        .continue_stmt,
+        .break_stmt,
+        .labeled_stmt,
+        .switch_stmt,
+        .case_stmt,
+        .default_stmt,
+        .goto_stmt,
+        .computed_goto_stmt,
+        .gnu_asm_simple,
+        .global_asm,
+        .typedef,
+        .struct_decl,
+        .union_decl,
+        .enum_decl,
+        .fn_proto,
+        .fn_def,
+        .param,
+        .variable,
+        .enum_field,
+        .record_field,
+        .struct_forward_decl,
+        .union_forward_decl,
+        .enum_forward_decl,
+        .empty_decl,
+        => unreachable, // not an expression
     });
 }
 
@@ -2895,6 +2941,41 @@ fn transTypeInfo(
         .data = operand,
     };
     return ZigNode.initPayload(&payload.base);
+}
+
+fn transStmtExpr(
+    t: *Translator,
+    scope: *Scope,
+    stmt_expr: Node.Unary,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const compound_stmt = stmt_expr.operand.get(t.tree).compound_stmt;
+    if (used == .unused) {
+        return t.transCompoundStmt(scope, compound_stmt);
+    }
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    for (compound_stmt.body[0 .. compound_stmt.body.len - 1]) |stmt| {
+        const result = try t.transStmt(&block_scope.base, stmt);
+        switch (result.tag()) {
+            .declaration, .empty_block => {},
+            else => try block_scope.statements.append(t.gpa, result),
+        }
+    }
+
+    const last_result = try t.transExpr(&block_scope.base, compound_stmt.body[compound_stmt.body.len - 1], .used);
+    switch (last_result.tag()) {
+        .declaration, .empty_block => {},
+        else => {
+            const break_node = try ZigTag.break_val.create(t.arena, .{
+                .label = block_scope.label,
+                .val = last_result,
+            });
+            try block_scope.statements.append(t.gpa, break_node);
+        },
+    }
+    return block_scope.complete();
 }
 
 // =====================

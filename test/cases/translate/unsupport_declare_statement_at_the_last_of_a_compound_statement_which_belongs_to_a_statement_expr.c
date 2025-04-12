@@ -4,12 +4,14 @@ void somefunc(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn somefunc() void {
 //     var y: c_int = undefined;
 //     _ = &y;
-//     _ = blk: {
+//     {
 //         y = 1;
-//     };
+//         comptime {
+//             if (!(@as(c_int, 1) != 0)) @compileError("static assertion failed");
+//         };
+//     }
 // }
