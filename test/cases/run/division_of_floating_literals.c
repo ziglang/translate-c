@@ -8,6 +8,5 @@ int main(void) {
 }
 
 // run
-// expect=fail
 //
 // DEG2RAD is: 0.017453
