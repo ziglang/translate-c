@@ -62,16 +62,22 @@ void foo(void) {
 //         ref.* <<= @intCast(1);
 //         break :blk ref.*;
 //     });
-//     a = @divTrunc(a, blk: {
+//     {
 //         const ref = &a;
-//         ref.* = @divTrunc(ref.*, 1);
-//         break :blk ref.*;
-//     });
-//     a = __helpers.signedRemainder(a, blk: {
+//         ref.* = @divTrunc(ref.*, blk: {
+//             const ref_1 = &a;
+//             ref_1.* = @divTrunc(ref_1.*, @as(c_int, 1));
+//             break :blk ref_1.*;
+//         });
+//     }
+//     {
 //         const ref = &a;
-//         ref.* = __helpers.signedRemainder(ref.*, 1);
-//         break :blk ref.*;
-//     });
+//         ref.* = __helpers.signedRemainder(ref.*, blk: {
+//             const ref_1 = &a;
+//             ref_1.* = __helpers.signedRemainder(ref_1.*, @as(c_int, 1));
+//             break :blk ref_1.*;
+//         });
+//     }
 //     b /= blk: {
 //         const ref = &b;
 //         ref.* /= 1;

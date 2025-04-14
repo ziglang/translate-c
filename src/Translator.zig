@@ -77,6 +77,9 @@ needed_helpers: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
 /// Used when parsing macros.
 typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
 
+/// The lhs lval of a compound assignment expression.
+compound_assign_dummy: ?ZigNode = null,
+
 fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
     return t.mangle_count;
@@ -1679,25 +1682,20 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .cond_dummy_expr => unreachable,
 
         .assign_expr => |assign| return t.transAssignExpr(scope, assign, used),
-        .add_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .add_wrap_assign
-        else
-            .add_assign, used),
-        .sub_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .sub_wrap_assign
-        else
-            .sub_assign, used),
-        .mul_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .mul_wrap_assign
-        else
-            .mul_assign, used),
-        .div_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .div_assign, used),
-        .mod_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .mod_assign, used),
-        .shl_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .shl_assign, used),
-        .shr_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .shr_assign, used),
-        .bit_and_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_and_assign, used),
-        .bit_xor_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_xor_assign, used),
-        .bit_or_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_or_assign, used),
+        .add_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .sub_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .mul_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .div_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .mod_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .shl_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .shr_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_and_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_xor_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_or_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .compound_assign_dummy_expr => {
+            assert(used == .used);
+            return t.compound_assign_dummy.?;
+        },
 
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
         .pre_inc_expr => |un| return t.transIncDecExpr(scope, un, .pre, .inc, used),
@@ -2251,52 +2249,18 @@ fn transCompoundAssign(
     t: *Translator,
     scope: *Scope,
     assign: Node.Binary,
-    op: ZigTag,
     used: ResultUsed,
 ) !ZigNode {
-    const is_shift = op == .shl_assign or op == .shr_assign;
-    const is_div = op == .div_assign;
-    const is_mod = op == .mod_assign;
-    const lhs_qt = assign.lhs.qt(t.tree);
-    const rhs_qt = assign.rhs.qt(t.tree);
-    const is_signed = lhs_qt.isInt(t.comp) and lhs_qt.signedness(t.comp) == .signed;
-    // const is_ptr_arithmetic = lhs_qt.isPointer(t.comp) and rhs_qt.isInt(t.comp);
-    const is_ptr_op_signed = lhs_qt.isPointer(t.comp) and rhs_qt.isInt(t.comp) and rhs_qt.signedness(t.comp) == .signed;
-    // const requires_cast = !lhs_qt.eql(rhs_qt, t.comp) and !is_ptr_arithmetic;
-
+    // If the result is unused we can try using the equivalent Zig operator
+    // without a block
     if (used == .unused) {
-        // common case
-        // c: lhs += rhs
-        // zig: lhs += rhs
-        const lhs_node = try t.transExpr(scope, assign.lhs, .used);
-        var rhs_node = try t.transExprCoercing(scope, assign.rhs, .used);
-        if (is_ptr_op_signed) rhs_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
-
-        if ((is_mod or is_div) and is_signed) {
-            // if (requires_cast) rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-            const builtin = if (is_mod)
-                try t.createHelperCallNode(.signedRemainder, &.{ lhs_node, rhs_node })
-            else
-                try ZigTag.div_trunc.create(t.arena, .{ .lhs = lhs_node, .rhs = rhs_node });
-
-            return t.createBinOpNode(.assign, lhs_node, builtin);
+        if (try t.transCompoundAssignSimple(scope, null, assign)) |some| {
+            return some;
         }
-
-        if (is_shift) {
-            rhs_node = try ZigTag.int_cast.create(t.arena, rhs_node);
-            // } else if (requires_cast) {
-            //     rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-        }
-        return t.createBinOpNode(op, lhs_node, rhs_node);
     }
-    // worst case
-    // c:   lhs += rhs
-    // zig: (blk: {
-    // zig:     const _ref = &lhs;
-    // zig:     _ref.* += rhs;
-    // zig:     break :blk _ref.*
-    // zig: })
-    var block_scope = try Scope.Block.init(t, scope, true);
+
+    // Otherwise we need to wrap the the compound assignment in a block.
+    var block_scope = try Scope.Block.init(t, scope, used == .used);
     defer block_scope.deinit();
     const ref = try block_scope.reserveMangledName("ref");
 
@@ -2308,34 +2272,77 @@ fn transCompoundAssign(
     const lhs_node = try ZigTag.identifier.create(t.arena, ref);
     const ref_node = try ZigTag.deref.create(t.arena, lhs_node);
 
-    var rhs_node = try t.transExprCoercing(&block_scope.base, assign.rhs, .used);
-    if (is_ptr_op_signed) rhs_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
-    if ((is_mod or is_div) and is_signed) {
-        // if (requires_cast) rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-        const builtin = if (is_mod)
-            try t.createHelperCallNode(.signedRemainder, &.{ ref_node, rhs_node })
-        else
-            try ZigTag.div_trunc.create(t.arena, .{ .lhs = ref_node, .rhs = rhs_node });
+    const old_dummy = t.compound_assign_dummy;
+    defer t.compound_assign_dummy = old_dummy;
+    t.compound_assign_dummy = ref_node;
 
-        const assign_node = try t.createBinOpNode(.assign, ref_node, builtin);
-        try block_scope.statements.append(t.gpa, assign_node);
+    // Use the equivalent Zig operator if possible.
+    if (try t.transCompoundAssignSimple(scope, ref_node, assign)) |some| {
+        try block_scope.statements.append(t.gpa, some);
     } else {
-        if (is_shift) {
-            rhs_node = try ZigTag.int_cast.create(t.arena, rhs_node);
-            // } else if (requires_cast) {
-            //     rhs_node = try t.transCCast(&block_scope.base, lhs_qt, rhs_qt, rhs_node);
-        }
-
-        const assign_node = try t.createBinOpNode(op, ref_node, rhs_node);
+        // Otherwise do the operation and assignment separately.
+        const rhs_node = try t.transExprCoercing(&block_scope.base, assign.rhs, .used);
+        const assign_node = try t.createBinOpNode(.assign, ref_node, rhs_node);
         try block_scope.statements.append(t.gpa, assign_node);
     }
 
-    const break_node = try ZigTag.break_val.create(t.arena, .{
-        .label = block_scope.label,
-        .val = ref_node,
-    });
-    try block_scope.statements.append(t.gpa, break_node);
+    if (used == .used) {
+        const break_node = try ZigTag.break_val.create(t.arena, .{
+            .label = block_scope.label,
+            .val = ref_node,
+        });
+        try block_scope.statements.append(t.gpa, break_node);
+    }
     return block_scope.complete();
+}
+
+/// Translates compound assignment using the equivalent Zig operator if possible.
+fn transCompoundAssignSimple(t: *Translator, scope: *Scope, lhs_node_opt: ?ZigNode, assign: Node.Binary) TransError!?ZigNode {
+    const assign_rhs = assign.rhs.get(t.tree);
+    if (assign_rhs == .cast) return null;
+
+    const is_signed = assign.qt.isInt(t.comp) and assign.qt.signedness(t.comp) == .signed;
+    switch (assign_rhs) {
+        .div_expr, .mod_expr => if (is_signed) return null,
+        else => {},
+    }
+    const lhs_ptr = assign.qt.isPointer(t.comp);
+
+    const rhs, const op: ZigTag, const cast: enum { none, shift, usize } = switch (assign_rhs) {
+        .add_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .add_wrap_assign else .add_assign,
+            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+        },
+        .sub_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .sub_wrap_assign else .sub_assign,
+            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+        },
+        .mul_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .mul_wrap_assign else .mul_assign,
+            .none,
+        },
+        .mod_expr => |bin| .{ bin.rhs, .mod_assign, .none },
+        .div_expr => |bin| .{ bin.rhs, .div_assign, .none },
+        .shl_expr => |bin| .{ bin.rhs, .shl_assign, .shift },
+        .shr_expr => |bin| .{ bin.rhs, .shr_assign, .shift },
+        .bit_and_expr => |bin| .{ bin.rhs, .bit_and_assign, .none },
+        .bit_xor_expr => |bin| .{ bin.rhs, .bit_xor_assign, .none },
+        .bit_or_expr => |bin| .{ bin.rhs, .bit_or_assign, .none },
+        else => unreachable,
+    };
+
+    const lhs_node = lhs_node_opt orelse try t.transExpr(scope, assign.lhs, .used);
+
+    const rhs_node = try t.transExprCoercing(scope, rhs, .used);
+    const casted_rhs = switch (cast) {
+        .none => rhs_node,
+        .shift => try ZigTag.int_cast.create(t.arena, rhs_node),
+        .usize => try t.usizeCastForWrappingPtrArithmetic(rhs_node),
+    };
+    return try t.createBinOpNode(op, lhs_node, casted_rhs);
 }
 
 fn transIncDecExpr(
