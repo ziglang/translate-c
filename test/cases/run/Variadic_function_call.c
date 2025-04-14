@@ -6,6 +6,5 @@ int main(void) {
 }
 
 // run
-// expect=fail
 //
 // 1 2
