@@ -1207,7 +1207,7 @@ fn transFnType(
 /// Produces a Zig AST node by translating a Type, respecting the width, but modifying the signed-ness.
 /// Asserts the type is an integer.
 fn transTypeIntWidthOf(t: *Translator, qt: QualType, is_signed: bool) TypeError!ZigNode {
-    return ZigTag.type.create(t.arena, switch (qt.type(t.comp)) {
+    return ZigTag.type.create(t.arena, switch (qt.base(t.comp).type) {
         .int => |int_ty| switch (int_ty) {
             .char, .schar, .uchar => if (is_signed) "i8" else "u8",
             .short, .ushort => if (is_signed) "c_short" else "c_ushort",
@@ -1888,22 +1888,23 @@ fn transCastExpr(
                     }
                 }
 
-                const operand_expr = try t.transExprCoercing(scope, cast.operand, .used);
-
-                const needs_truncate = src_qt.intRankOrder(dest_qt, t.comp).compare(.gt);
+                const src_dest_order = src_qt.intRankOrder(dest_qt, t.comp);
                 const needs_bitcast = src_qt.signedness(t.comp) != dest_qt.signedness(t.comp);
-                if (needs_truncate and needs_bitcast) {
-                    const as = try ZigTag.as.create(t.arena, .{
-                        .lhs = try t.transTypeIntWidthOf(dest_qt, src_qt.signedness(t.comp) == .signed),
-                        .rhs = try ZigTag.truncate.create(t.arena, operand_expr),
-                    });
-                    break :to_cast try ZigTag.bit_cast.create(t.arena, as);
-                } else if (needs_truncate) {
-                    break :to_cast try ZigTag.truncate.create(t.arena, operand_expr);
-                } else if (needs_bitcast) {
-                    break :to_cast try ZigTag.bit_cast.create(t.arena, operand_expr);
+
+                var operand = try t.transExprCoercing(scope, cast.operand, .used);
+                if (src_dest_order == .gt) {
+                    operand = try ZigTag.truncate.create(t.arena, operand);
                 }
-                break :to_cast operand_expr;
+                if (needs_bitcast and src_dest_order != .eq) {
+                    operand = try ZigTag.as.create(t.arena, .{
+                        .lhs = try t.transTypeIntWidthOf(dest_qt, src_qt.signedness(t.comp) == .signed),
+                        .rhs = operand,
+                    });
+                }
+                if (needs_bitcast) {
+                    break :to_cast try ZigTag.bit_cast.create(t.arena, operand);
+                }
+                break :to_cast operand;
             },
             .to_void => {
                 assert(used == .unused);
