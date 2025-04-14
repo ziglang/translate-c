@@ -77,6 +77,9 @@ needed_helpers: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
 /// Used when parsing macros.
 typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
 
+/// The lhs lval of a compound assignment expression.
+compound_assign_dummy: ?ZigNode = null,
+
 fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
     return t.mangle_count;
@@ -1207,7 +1210,7 @@ fn transFnType(
 /// Produces a Zig AST node by translating a Type, respecting the width, but modifying the signed-ness.
 /// Asserts the type is an integer.
 fn transTypeIntWidthOf(t: *Translator, qt: QualType, is_signed: bool) TypeError!ZigNode {
-    return ZigTag.type.create(t.arena, switch (qt.type(t.comp)) {
+    return ZigTag.type.create(t.arena, switch (qt.base(t.comp).type) {
         .int => |int_ty| switch (int_ty) {
             .char, .schar, .uchar => if (is_signed) "i8" else "u8",
             .short, .ushort => if (is_signed) "c_short" else "c_ushort",
@@ -1567,6 +1570,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .bool_not_expr => |bool_not_expr| try ZigTag.not.create(t.arena, try t.transBoolExpr(scope, bool_not_expr.operand)),
         .bit_not_expr => |bit_not_expr| try ZigTag.bit_not.create(t.arena, try t.transExpr(scope, bit_not_expr.operand, .used)),
+        .plus_expr => |plus_expr| return t.transExpr(scope, plus_expr.operand, used),
         .negate_expr => |negate_expr| res: {
             const operand_qt = negate_expr.operand.qt(t.tree);
             if (!t.typeHasWrappingOverflow(operand_qt)) {
@@ -1659,33 +1663,39 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .member_access_ptr_expr => |member_access| try t.transMemberAccess(scope, .ptr, member_access),
         .array_access_expr => |array_access| try t.transArrayAccess(scope, array_access),
 
+        .builtin_ref => unreachable,
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
         .call_expr => |call| return t.transCall(scope, call, used),
 
+        .builtin_types_compatible_p => |compatible| blk: {
+            const lhs = try t.transType(scope, compatible.lhs, compatible.builtin_tok);
+            const rhs = try t.transType(scope, compatible.rhs, compatible.builtin_tok);
+
+            break :blk try ZigTag.equal.create(t.arena, .{
+                .lhs = lhs,
+                .rhs = rhs,
+            });
+        },
+        .builtin_choose_expr => |choose| return t.transCondExpr(scope, choose, used),
         .cond_expr => |cond_expr| return t.transCondExpr(scope, cond_expr, used),
         .binary_cond_expr => |conditional| return t.transBinaryCondExpr(scope, conditional, used),
         .cond_dummy_expr => unreachable,
 
         .assign_expr => |assign| return t.transAssignExpr(scope, assign, used),
-        .add_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .add_wrap_assign
-        else
-            .add_assign, used),
-        .sub_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .sub_wrap_assign
-        else
-            .sub_assign, used),
-        .mul_assign_expr => |assign| return t.transCompoundAssign(scope, assign, if (t.typeHasWrappingOverflow(assign.qt))
-            .mul_wrap_assign
-        else
-            .mul_assign, used),
-        .div_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .div_assign, used),
-        .mod_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .mod_assign, used),
-        .shl_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .shl_assign, used),
-        .shr_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .shr_assign, used),
-        .bit_and_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_and_assign, used),
-        .bit_xor_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_xor_assign, used),
-        .bit_or_assign_expr => |assign| return t.transCompoundAssign(scope, assign, .bit_or_assign, used),
+        .add_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .sub_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .mul_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .div_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .mod_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .shl_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .shr_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_and_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_xor_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .bit_or_assign_expr => |assign| return t.transCompoundAssign(scope, assign, used),
+        .compound_assign_dummy_expr => {
+            assert(used == .used);
+            return t.compound_assign_dummy.?;
+        },
 
         .comma_expr => |comma_expr| return t.transCommaExpr(scope, comma_expr, used),
         .pre_inc_expr => |un| return t.transIncDecExpr(scope, un, .pre, .inc, used),
@@ -1731,18 +1741,52 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .sizeof_expr => |sizeof| try t.transTypeInfo(scope, .sizeof, sizeof),
         .alignof_expr => |alignof| try t.transTypeInfo(scope, .alignof, alignof),
 
-        else => {
-            if (t.tree.value_map.get(expr)) |val| {
-                // TODO handle other values
-                const int = try t.createIntNode(val);
-                const as_node = try ZigTag.as.create(t.arena, .{
-                    .lhs = try t.transType(undefined, qt, undefined),
-                    .rhs = int,
-                });
-                return t.maybeSuppressResult(used, as_node);
-            }
-            unreachable; // Not an expression.
+        .imag_expr, .real_expr => |un| {
+            return t.fail(error.UnsupportedTranslation, un.op_tok, "TODO complex numbers", .{});
         },
+        .addr_of_label => |addr_of_label| {
+            return t.fail(error.UnsupportedTranslation, addr_of_label.label_tok, "TODO computed goto", .{});
+        },
+
+        .generic_expr => |generic| return t.transExpr(scope, generic.chosen, used),
+        .generic_association_expr => unreachable,
+        .generic_default_expr => unreachable,
+
+        .stmt_expr => |stmt_expr| return t.transStmtExpr(scope, stmt_expr, used),
+
+        .compound_stmt,
+        .static_assert,
+        .return_stmt,
+        .null_stmt,
+        .if_stmt,
+        .while_stmt,
+        .do_while_stmt,
+        .for_stmt,
+        .continue_stmt,
+        .break_stmt,
+        .labeled_stmt,
+        .switch_stmt,
+        .case_stmt,
+        .default_stmt,
+        .goto_stmt,
+        .computed_goto_stmt,
+        .gnu_asm_simple,
+        .global_asm,
+        .typedef,
+        .struct_decl,
+        .union_decl,
+        .enum_decl,
+        .fn_proto,
+        .fn_def,
+        .param,
+        .variable,
+        .enum_field,
+        .record_field,
+        .struct_forward_decl,
+        .union_forward_decl,
+        .enum_forward_decl,
+        .empty_decl,
+        => unreachable, // not an expression
     });
 }
 
@@ -1823,143 +1867,140 @@ fn transCastExpr(
     used: ResultUsed,
     suppress_as: SuppressCast,
 ) TransError!ZigNode {
-    const to_cast = to_cast: {
-        switch (cast.kind) {
-            .lval_to_rval, .no_op, .function_to_pointer => {
-                return t.transExpr(scope, cast.operand, used);
-            },
-            .int_cast => {
-                const dest_qt = cast.qt;
-                const src_qt = cast.operand.qt(t.tree);
+    const operand = switch (cast.kind) {
+        .lval_to_rval, .no_op, .function_to_pointer => {
+            return t.transExpr(scope, cast.operand, used);
+        },
+        .int_cast => int_cast: {
+            const dest_qt = cast.qt;
+            const src_qt = cast.operand.qt(t.tree);
 
-                if (cast.implicit) {
-                    if (t.tree.value_map.get(cast.operand)) |val| {
-                        const max_int = try aro.Value.maxInt(cast.qt, t.comp);
+            if (cast.implicit) {
+                if (t.tree.value_map.get(cast.operand)) |val| {
+                    const max_int = try aro.Value.maxInt(cast.qt, t.comp);
 
-                        if (val.compare(.lte, max_int, t.comp)) {
-                            break :to_cast try t.transExprCoercing(scope, cast.operand, .used);
-                        }
+                    if (val.compare(.lte, max_int, t.comp)) {
+                        break :int_cast try t.transExprCoercing(scope, cast.operand, .used);
                     }
                 }
+            }
 
-                const operand_expr = try t.transExprCoercing(scope, cast.operand, .used);
+            const src_dest_order = src_qt.intRankOrder(dest_qt, t.comp);
+            const needs_bitcast = src_qt.signedness(t.comp) != dest_qt.signedness(t.comp);
 
-                const needs_truncate = src_qt.intRankOrder(dest_qt, t.comp).compare(.gt);
-                const needs_bitcast = src_qt.signedness(t.comp) != dest_qt.signedness(t.comp);
-                if (needs_truncate and needs_bitcast) {
-                    const as = try ZigTag.as.create(t.arena, .{
-                        .lhs = try t.transTypeIntWidthOf(dest_qt, src_qt.signedness(t.comp) == .signed),
-                        .rhs = try ZigTag.truncate.create(t.arena, operand_expr),
-                    });
-                    break :to_cast try ZigTag.bit_cast.create(t.arena, as);
-                } else if (needs_truncate) {
-                    break :to_cast try ZigTag.truncate.create(t.arena, operand_expr);
-                } else if (needs_bitcast) {
-                    break :to_cast try ZigTag.bit_cast.create(t.arena, operand_expr);
-                }
-                break :to_cast operand_expr;
-            },
-            .to_void => {
-                assert(used == .unused);
-                return try t.transExpr(scope, cast.operand, .unused);
-            },
-            .null_to_pointer => {
-                break :to_cast ZigTag.null_literal.init();
-            },
-            .array_to_pointer => {
-                if (t.tree.value_map.get(cast.operand)) |val| {
-                    const str_qt = cast.qt;
-                    const bytes = t.comp.interner.get(val.ref()).bytes;
-                    var buf = std.ArrayList(u8).init(t.gpa);
-                    defer buf.deinit();
+            var operand = try t.transExprCoercing(scope, cast.operand, .used);
+            if (src_dest_order == .gt) {
+                operand = try ZigTag.truncate.create(t.arena, operand);
+            }
+            if (needs_bitcast and src_dest_order != .eq) {
+                operand = try ZigTag.as.create(t.arena, .{
+                    .lhs = try t.transTypeIntWidthOf(dest_qt, src_qt.signedness(t.comp) == .signed),
+                    .rhs = operand,
+                });
+            }
+            if (needs_bitcast) {
+                break :int_cast try ZigTag.bit_cast.create(t.arena, operand);
+            }
+            break :int_cast operand;
+        },
+        .to_void => {
+            assert(used == .unused);
+            return try t.transExpr(scope, cast.operand, .unused);
+        },
+        .null_to_pointer => ZigTag.null_literal.init(),
+        .array_to_pointer => array_to_pointer: {
+            if (t.tree.value_map.get(cast.operand)) |val| {
+                const str_qt = cast.qt;
+                const bytes = t.comp.interner.get(val.ref()).bytes;
+                var buf = std.ArrayList(u8).init(t.gpa);
+                defer buf.deinit();
 
-                    try buf.ensureUnusedCapacity(bytes.len);
-                    try aro.Value.printString(bytes, str_qt, t.comp, buf.writer());
+                try buf.ensureUnusedCapacity(bytes.len);
+                try aro.Value.printString(bytes, str_qt, t.comp, buf.writer());
 
-                    const string_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
-                    return t.maybeSuppressResult(used, string_node);
-                }
+                const string_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+                return t.maybeSuppressResult(used, string_node);
+            }
 
-                if (cast.operand.qt(t.tree).arrayLen(t.comp) == null) {
-                    return try t.transExpr(scope, cast.operand, used);
-                }
+            if (cast.operand.qt(t.tree).arrayLen(t.comp) == null) {
+                return try t.transExpr(scope, cast.operand, used);
+            }
 
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                const ref = try ZigTag.address_of.create(t.arena, sub_expr_node);
-                const align_cast = try ZigTag.align_cast.create(t.arena, ref);
-                break :to_cast try ZigTag.ptr_cast.create(t.arena, align_cast);
-            },
-            .int_to_pointer => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                break :to_cast try ZigTag.ptr_from_int.create(t.arena, sub_expr_node);
-            },
-            .int_to_bool => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                if (sub_expr_node.isBoolRes()) return sub_expr_node;
-                const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            const ref = try ZigTag.address_of.create(t.arena, sub_expr_node);
+            const align_cast = try ZigTag.align_cast.create(t.arena, ref);
+            break :array_to_pointer try ZigTag.ptr_cast.create(t.arena, align_cast);
+        },
+        .int_to_pointer => int_to_pointer: {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            break :int_to_pointer try ZigTag.ptr_from_int.create(t.arena, sub_expr_node);
+        },
+        .int_to_bool => {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            if (sub_expr_node.isBoolRes()) return sub_expr_node;
+            const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+            return t.maybeSuppressResult(used, cmp_node);
+        },
+        .float_to_bool => {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
+            return t.maybeSuppressResult(used, cmp_node);
+        },
+        .pointer_to_bool => {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+
+            // Special case function pointers as @intFromPtr(expr) != 0
+            if (cast.operand.qt(t.tree).get(t.comp, .pointer)) |ptr_ty| if (ptr_ty.child.is(t.comp, .func)) {
+                const int_from_ptr = try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
+                const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = int_from_ptr, .rhs = ZigTag.zero_literal.init() });
                 return t.maybeSuppressResult(used, cmp_node);
-            },
-            .float_to_bool => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.zero_literal.init() });
-                return t.maybeSuppressResult(used, cmp_node);
-            },
-            .pointer_to_bool => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            };
 
-                // Special case function pointers as @intFromPtr(expr) != 0
-                if (cast.operand.qt(t.tree).get(t.comp, .pointer)) |ptr_ty| if (ptr_ty.child.is(t.comp, .func)) {
-                    const int_from_ptr = try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
-                    const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = int_from_ptr, .rhs = ZigTag.zero_literal.init() });
-                    return t.maybeSuppressResult(used, cmp_node);
-                };
-
-                const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.null_literal.init() });
-                return t.maybeSuppressResult(used, cmp_node);
-            },
-            .bool_to_int => {
-                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
-                break :to_cast try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
-            },
-            .bool_to_float => {
-                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
-                const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
-                break :to_cast try ZigTag.float_from_int.create(t.arena, int_from_bool);
-            },
-            .bool_to_pointer => {
-                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
-                const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
-                break :to_cast try ZigTag.ptr_from_int.create(t.arena, int_from_bool);
-            },
-            .float_cast => {
-                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
-                break :to_cast try ZigTag.float_cast.create(t.arena, sub_expr_node);
-            },
-            .int_to_float => return t.transExprCoercing(scope, cast.operand, used),
-            .float_to_int => {
-                const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
-                break :to_cast try ZigTag.int_from_float.create(t.arena, sub_expr_node);
-            },
-            .pointer_to_int => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                break :to_cast try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
-            },
-            .bitcast => {
-                const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-                if (cast.qt.isPointer(t.comp) and cast.operand.qt(t.tree).isPointer(t.comp)) {
-                    const align_cast = try ZigTag.align_cast.create(t.arena, sub_expr_node);
-                    break :to_cast try ZigTag.ptr_cast.create(t.arena, align_cast);
-                }
-            },
-            else => {},
-        }
-        return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)});
+            const cmp_node = try ZigTag.not_equal.create(t.arena, .{ .lhs = sub_expr_node, .rhs = ZigTag.null_literal.init() });
+            return t.maybeSuppressResult(used, cmp_node);
+        },
+        .bool_to_int => bool_to_int: {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            break :bool_to_int try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+        },
+        .bool_to_float => bool_to_float: {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+            break :bool_to_float try ZigTag.float_from_int.create(t.arena, int_from_bool);
+        },
+        .bool_to_pointer => bool_to_pointer: {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
+            break :bool_to_pointer try ZigTag.ptr_from_int.create(t.arena, int_from_bool);
+        },
+        .float_cast => float_cast: {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            break :float_cast try ZigTag.float_cast.create(t.arena, sub_expr_node);
+        },
+        .int_to_float => return t.transExprCoercing(scope, cast.operand, used),
+        .float_to_int => float_to_int: {
+            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            break :float_to_int try ZigTag.int_from_float.create(t.arena, sub_expr_node);
+        },
+        .pointer_to_int => pointer_to_int: {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            break :pointer_to_int try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
+        },
+        .bitcast => bitcast: {
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            if (cast.qt.isPointer(t.comp) and cast.operand.qt(t.tree).isPointer(t.comp)) {
+                const align_cast = try ZigTag.align_cast.create(t.arena, sub_expr_node);
+                break :bitcast try ZigTag.ptr_cast.create(t.arena, align_cast);
+            }
+            return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO non-pointer bitcast {s}", .{@tagName(cast.qt.base(t.comp).type)});
+        },
+        else => return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)}),
     };
-    if (suppress_as == .no_as) return t.maybeSuppressResult(used, to_cast);
-    if (used == .unused) return t.maybeSuppressResult(used, to_cast);
+    if (suppress_as == .no_as) return t.maybeSuppressResult(used, operand);
+    if (used == .unused) return t.maybeSuppressResult(used, operand);
     const as = try ZigTag.as.create(t.arena, .{
         .lhs = try t.transType(scope, cast.qt, cast.l_paren),
-        .rhs = to_cast,
+        .rhs = operand,
     });
     return as;
 }
@@ -2208,52 +2249,18 @@ fn transCompoundAssign(
     t: *Translator,
     scope: *Scope,
     assign: Node.Binary,
-    op: ZigTag,
     used: ResultUsed,
 ) !ZigNode {
-    const is_shift = op == .shl_assign or op == .shr_assign;
-    const is_div = op == .div_assign;
-    const is_mod = op == .mod_assign;
-    const lhs_qt = assign.lhs.qt(t.tree);
-    const rhs_qt = assign.rhs.qt(t.tree);
-    const is_signed = lhs_qt.isInt(t.comp) and lhs_qt.signedness(t.comp) == .signed;
-    // const is_ptr_arithmetic = lhs_qt.isPointer(t.comp) and rhs_qt.isInt(t.comp);
-    const is_ptr_op_signed = lhs_qt.isPointer(t.comp) and rhs_qt.isInt(t.comp) and rhs_qt.signedness(t.comp) == .signed;
-    // const requires_cast = !lhs_qt.eql(rhs_qt, t.comp) and !is_ptr_arithmetic;
-
+    // If the result is unused we can try using the equivalent Zig operator
+    // without a block
     if (used == .unused) {
-        // common case
-        // c: lhs += rhs
-        // zig: lhs += rhs
-        const lhs_node = try t.transExpr(scope, assign.lhs, .used);
-        var rhs_node = try t.transExprCoercing(scope, assign.rhs, .used);
-        if (is_ptr_op_signed) rhs_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
-
-        if ((is_mod or is_div) and is_signed) {
-            // if (requires_cast) rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-            const builtin = if (is_mod)
-                try t.createHelperCallNode(.signedRemainder, &.{ lhs_node, rhs_node })
-            else
-                try ZigTag.div_trunc.create(t.arena, .{ .lhs = lhs_node, .rhs = rhs_node });
-
-            return t.createBinOpNode(.assign, lhs_node, builtin);
+        if (try t.transCompoundAssignSimple(scope, null, assign)) |some| {
+            return some;
         }
-
-        if (is_shift) {
-            rhs_node = try ZigTag.int_cast.create(t.arena, rhs_node);
-            // } else if (requires_cast) {
-            //     rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-        }
-        return t.createBinOpNode(op, lhs_node, rhs_node);
     }
-    // worst case
-    // c:   lhs += rhs
-    // zig: (blk: {
-    // zig:     const _ref = &lhs;
-    // zig:     _ref.* += rhs;
-    // zig:     break :blk _ref.*
-    // zig: })
-    var block_scope = try Scope.Block.init(t, scope, true);
+
+    // Otherwise we need to wrap the the compound assignment in a block.
+    var block_scope = try Scope.Block.init(t, scope, used == .used);
     defer block_scope.deinit();
     const ref = try block_scope.reserveMangledName("ref");
 
@@ -2265,34 +2272,77 @@ fn transCompoundAssign(
     const lhs_node = try ZigTag.identifier.create(t.arena, ref);
     const ref_node = try ZigTag.deref.create(t.arena, lhs_node);
 
-    var rhs_node = try t.transExprCoercing(&block_scope.base, assign.rhs, .used);
-    if (is_ptr_op_signed) rhs_node = try t.usizeCastForWrappingPtrArithmetic(rhs_node);
-    if ((is_mod or is_div) and is_signed) {
-        // if (requires_cast) rhs_node = try t.transCCast(scope, lhs_qt, rhs_qt, rhs_node);
-        const builtin = if (is_mod)
-            try t.createHelperCallNode(.signedRemainder, &.{ ref_node, rhs_node })
-        else
-            try ZigTag.div_trunc.create(t.arena, .{ .lhs = ref_node, .rhs = rhs_node });
+    const old_dummy = t.compound_assign_dummy;
+    defer t.compound_assign_dummy = old_dummy;
+    t.compound_assign_dummy = ref_node;
 
-        const assign_node = try t.createBinOpNode(.assign, ref_node, builtin);
-        try block_scope.statements.append(t.gpa, assign_node);
+    // Use the equivalent Zig operator if possible.
+    if (try t.transCompoundAssignSimple(scope, ref_node, assign)) |some| {
+        try block_scope.statements.append(t.gpa, some);
     } else {
-        if (is_shift) {
-            rhs_node = try ZigTag.int_cast.create(t.arena, rhs_node);
-            // } else if (requires_cast) {
-            //     rhs_node = try t.transCCast(&block_scope.base, lhs_qt, rhs_qt, rhs_node);
-        }
-
-        const assign_node = try t.createBinOpNode(op, ref_node, rhs_node);
+        // Otherwise do the operation and assignment separately.
+        const rhs_node = try t.transExprCoercing(&block_scope.base, assign.rhs, .used);
+        const assign_node = try t.createBinOpNode(.assign, ref_node, rhs_node);
         try block_scope.statements.append(t.gpa, assign_node);
     }
 
-    const break_node = try ZigTag.break_val.create(t.arena, .{
-        .label = block_scope.label,
-        .val = ref_node,
-    });
-    try block_scope.statements.append(t.gpa, break_node);
+    if (used == .used) {
+        const break_node = try ZigTag.break_val.create(t.arena, .{
+            .label = block_scope.label,
+            .val = ref_node,
+        });
+        try block_scope.statements.append(t.gpa, break_node);
+    }
     return block_scope.complete();
+}
+
+/// Translates compound assignment using the equivalent Zig operator if possible.
+fn transCompoundAssignSimple(t: *Translator, scope: *Scope, lhs_node_opt: ?ZigNode, assign: Node.Binary) TransError!?ZigNode {
+    const assign_rhs = assign.rhs.get(t.tree);
+    if (assign_rhs == .cast) return null;
+
+    const is_signed = assign.qt.isInt(t.comp) and assign.qt.signedness(t.comp) == .signed;
+    switch (assign_rhs) {
+        .div_expr, .mod_expr => if (is_signed) return null,
+        else => {},
+    }
+    const lhs_ptr = assign.qt.isPointer(t.comp);
+
+    const rhs, const op: ZigTag, const cast: enum { none, shift, usize } = switch (assign_rhs) {
+        .add_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .add_wrap_assign else .add_assign,
+            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+        },
+        .sub_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .sub_wrap_assign else .sub_assign,
+            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+        },
+        .mul_expr => |bin| .{
+            bin.rhs,
+            if (t.typeHasWrappingOverflow(bin.qt)) .mul_wrap_assign else .mul_assign,
+            .none,
+        },
+        .mod_expr => |bin| .{ bin.rhs, .mod_assign, .none },
+        .div_expr => |bin| .{ bin.rhs, .div_assign, .none },
+        .shl_expr => |bin| .{ bin.rhs, .shl_assign, .shift },
+        .shr_expr => |bin| .{ bin.rhs, .shr_assign, .shift },
+        .bit_and_expr => |bin| .{ bin.rhs, .bit_and_assign, .none },
+        .bit_xor_expr => |bin| .{ bin.rhs, .bit_xor_assign, .none },
+        .bit_or_expr => |bin| .{ bin.rhs, .bit_or_assign, .none },
+        else => unreachable,
+    };
+
+    const lhs_node = lhs_node_opt orelse try t.transExpr(scope, assign.lhs, .used);
+
+    const rhs_node = try t.transExprCoercing(scope, rhs, .used);
+    const casted_rhs = switch (cast) {
+        .none => rhs_node,
+        .shift => try ZigTag.int_cast.create(t.arena, rhs_node),
+        .usize => try t.usizeCastForWrappingPtrArithmetic(rhs_node),
+    };
+    return try t.createBinOpNode(op, lhs_node, casted_rhs);
 }
 
 fn transIncDecExpr(
@@ -2895,6 +2945,41 @@ fn transTypeInfo(
         .data = operand,
     };
     return ZigNode.initPayload(&payload.base);
+}
+
+fn transStmtExpr(
+    t: *Translator,
+    scope: *Scope,
+    stmt_expr: Node.Unary,
+    used: ResultUsed,
+) TransError!ZigNode {
+    const compound_stmt = stmt_expr.operand.get(t.tree).compound_stmt;
+    if (used == .unused) {
+        return t.transCompoundStmt(scope, compound_stmt);
+    }
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    for (compound_stmt.body[0 .. compound_stmt.body.len - 1]) |stmt| {
+        const result = try t.transStmt(&block_scope.base, stmt);
+        switch (result.tag()) {
+            .declaration, .empty_block => {},
+            else => try block_scope.statements.append(t.gpa, result),
+        }
+    }
+
+    const last_result = try t.transExpr(&block_scope.base, compound_stmt.body[compound_stmt.body.len - 1], .used);
+    switch (last_result.tag()) {
+        .declaration, .empty_block => {},
+        else => {
+            const break_node = try ZigTag.break_val.create(t.arena, .{
+                .label = block_scope.label,
+                .val = last_result,
+            });
+            try block_scope.statements.append(t.gpa, break_node);
+        },
+    }
+    return block_scope.complete();
 }
 
 // =====================
