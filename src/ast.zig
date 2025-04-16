@@ -185,6 +185,8 @@ pub const Node = extern union {
 
         /// __helpers.<name>(argshelper_call)
         helper_call,
+        /// __helpers.<name>
+        helper_ref,
 
         asm_simple,
 
@@ -401,6 +403,7 @@ pub const Node = extern union {
                 .shuffle => Payload.Shuffle,
                 .builtin_extern => Payload.Extern,
                 .helper_call => Payload.HelperCall,
+                .helper_ref => Payload.HelperRef,
             };
         }
 
@@ -778,6 +781,11 @@ pub const Payload = struct {
             name: []const u8,
             args: []const Node,
         },
+    };
+
+    pub const HelperRef = struct {
+        base: Payload,
+        data: []const u8,
     };
 };
 
@@ -1441,6 +1449,15 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             });
             const func = try renderFieldAccess(c, helpers_tok, payload.name);
             return renderCall(c, func, payload.args);
+        },
+        .helper_ref => {
+            const payload = node.castTag(.helper_ref).?.data;
+            const helpers_tok = try c.addNode(.{
+                .tag = .identifier,
+                .main_token = try c.addIdentifier("__helpers"),
+                .data = undefined,
+            });
+            return renderFieldAccess(c, helpers_tok, payload);
         },
         .alignof => {
             const payload = node.castTag(.alignof).?.data;
@@ -2439,6 +2456,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .wrapped_local,
         .mut_str,
         .helper_call,
+        .helper_ref,
         .byte_swap,
         .ceil,
         .cos,

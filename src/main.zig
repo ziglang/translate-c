@@ -164,5 +164,6 @@ comptime {
     if (@import("builtin").is_test) {
         _ = Translator;
         _ = @import("helpers.zig");
+        _ = @import("PatternList.zig");
     }
 }

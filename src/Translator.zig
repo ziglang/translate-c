@@ -16,6 +16,7 @@ const ZigTag = ZigNode.Tag;
 const builtins = @import("builtins.zig");
 const helpers = @import("helpers.zig");
 const MacroTranslator = @import("MacroTranslator.zig");
+const PatternList = @import("PatternList.zig");
 const Scope = @import("Scope.zig");
 
 pub const Error = std.mem.Allocator.Error;
@@ -3063,7 +3064,7 @@ fn createBinOpNode(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args: []const ZigNode) !ZigNode {
+fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args_opt: ?[]const ZigNode) !ZigNode {
     switch (name) {
         .div => {
             try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
@@ -3105,10 +3106,14 @@ fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources)
         },
     }
 
-    return ZigTag.helper_call.create(t.arena, .{
-        .name = @tagName(name),
-        .args = try t.arena.dupe(ZigNode, args),
-    });
+    if (args_opt) |args| {
+        return ZigTag.helper_call.create(t.arena, .{
+            .name = @tagName(name),
+            .args = try t.arena.dupe(ZigNode, args),
+        });
+    } else {
+        return ZigTag.helper_ref.create(t.arena, @tagName(name));
+    }
 }
 
 /// Cast a signed integer node to a usize, for use in pointer arithmetic. Negative numbers
@@ -3135,6 +3140,9 @@ fn transMacros(t: *Translator) !void {
     var tok_list = std.ArrayList(CToken).init(t.gpa);
     defer tok_list.deinit();
 
+    var pattern_list = try PatternList.init(t.gpa);
+    defer pattern_list.deinit(t.gpa);
+
     var it = t.pp.defines.iterator();
     while (it.next()) |define_kv| {
         const name = define_kv.key_ptr.*;
@@ -3144,22 +3152,41 @@ fn transMacros(t: *Translator) !void {
             continue;
         }
 
-        // TODO bug in Aro
-        const params = if (macro.is_func) macro.params else &.{};
-        if (t.checkTranslatableMacro(macro.tokens, params)) |err| switch (err) {
-            .undefined_identifier => |ident| return t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
-            .invalid_arg_usage => |ident| return t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
-        };
-
         tok_list.items.len = 0;
         try tok_list.ensureUnusedCapacity(macro.tokens.len);
         for (macro.tokens) |tok| {
             switch (tok.id) {
                 .invalid => continue,
                 .whitespace => continue,
+                .comment => continue,
+                .macro_ws => continue,
                 else => {},
             }
             tok_list.appendAssumeCapacity(tok);
+        }
+
+        if (macro.is_func) {
+            const ms: PatternList.MacroSlicer = .{
+                .tokens = tok_list.items,
+                .source = t.comp.getSource(macro.loc.id).buf,
+                .params = @intCast(macro.params.len),
+            };
+            if (try pattern_list.match(ms)) |impl| {
+                const decl = try ZigTag.pub_var_simple.create(t.arena, .{
+                    .name = name,
+                    .init = try t.createHelperCallNode(impl, null),
+                });
+                try t.addTopLevelDecl(name, decl);
+                return;
+            }
+        }
+
+        if (t.checkTranslatableMacro(macro.tokens, macro.params)) |err| {
+            switch (err) {
+                .undefined_identifier => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
+                .invalid_arg_usage => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
+            }
+            continue;
         }
 
         var macro_translator: MacroTranslator = .{
