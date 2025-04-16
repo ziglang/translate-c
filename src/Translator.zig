@@ -81,13 +81,13 @@ typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// The lhs lval of a compound assignment expression.
 compound_assign_dummy: ?ZigNode = null,
 
-fn getMangle(t: *Translator) u32 {
+pub fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
     return t.mangle_count;
 }
 
 /// Convert an `aro.Source.Location` to a 'file:line:column' string.
-fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
+pub fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
     const source = t.comp.getSource(loc.id);
     const line_col = source.lineCol(loc);
     const filename = source.path;
@@ -103,7 +103,7 @@ fn maybeSuppressResult(t: *Translator, used: ResultUsed, result: ZigNode) TransE
     return ZigTag.discard.create(t.arena, .{ .should_skip = false, .value = result });
 }
 
-fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
+pub fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
     const gop = try t.global_scope.sym_table.getOrPut(t.gpa, name);
     if (!gop.found_existing) {
         gop.value_ptr.* = decl_node;
@@ -336,7 +336,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
     }
 }
 
-const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
+pub const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "uint8_t", "u8" },
     .{ "int8_t", "i8" },
     .{ "uint16_t", "u16" },
@@ -3064,7 +3064,7 @@ fn createBinOpNode(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args_opt: ?[]const ZigNode) !ZigNode {
+pub fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args_opt: ?[]const ZigNode) !ZigNode {
     switch (name) {
         .div => {
             try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
@@ -3188,10 +3188,15 @@ fn transMacros(t: *Translator) !void {
             }
             continue;
         }
+        try tok_list.append(.{
+            .id = .eof,
+            .source = macro.loc.id,
+        });
 
         var macro_translator: MacroTranslator = .{
             .t = t,
             .tokens = tok_list.items,
+            .source = t.comp.getSource(macro.loc.id).buf,
             .name = name,
             .macro = macro,
         };
@@ -3307,7 +3312,7 @@ fn getContainerTypeOf(t: *Translator, ref: ZigNode) ?ZigNode {
     return null;
 }
 
-fn getFnProto(t: *Translator, ref: ZigNode) ?*ast.Payload.Func {
+pub fn getFnProto(t: *Translator, ref: ZigNode) ?*ast.Payload.Func {
     const init = if (ref.castTag(.var_decl)) |v|
         v.data.init orelse return null
     else if (ref.castTag(.var_simple) orelse ref.castTag(.pub_var_simple)) |v|
