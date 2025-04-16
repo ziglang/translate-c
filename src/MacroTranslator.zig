@@ -64,28 +64,16 @@ pub fn transFnMacro(mt: *MacroTranslator) ParseError!void {
     defer block_scope.deinit();
     const scope = &block_scope.base;
 
-    try mt.skip(.l_paren);
-
-    var fn_params = std.ArrayList(ast.Payload.Param).init(mt.t.gpa);
-    defer fn_params.deinit();
-
-    while (true) {
-        if (!mt.peek().?.isMacroIdentifier()) break;
-
-        _ = mt.next();
-
-        const mangled_name = try block_scope.makeMangledName(mt.tokSlice());
-        try fn_params.append(.{
+    const fn_params = try mt.t.arena.alloc(ast.Payload.Param, mt.macro.params.len);
+    for (fn_params, mt.macro.params) |*param, param_name| {
+        const mangled_name = try block_scope.makeMangledName(param_name);
+        param.* = .{
             .is_noalias = false,
             .name = mangled_name,
             .type = ZigTag.@"anytype".init(),
-        });
+        };
         try block_scope.discardVariable(mangled_name);
-        if (mt.peek().? != .comma) break;
-        _ = mt.next();
     }
-
-    try mt.skip(.r_paren);
 
     const expr = try mt.parseCExpr(scope);
     const last = mt.next().?;
@@ -109,13 +97,13 @@ pub fn transFnMacro(mt: *MacroTranslator) ParseError!void {
         if (typeof_arg.castTag(.std_mem_zeroes)) |some| break :ret some.data;
         break :ret try ZigTag.typeof.create(mt.t.arena, typeof_arg);
     };
-    
+
     const return_expr = try ZigTag.@"return".create(mt.t.arena, expr);
     try block_scope.statements.append(mt.t.gpa, return_expr);
 
     const fn_decl = try ZigTag.pub_inline_fn.create(mt.t.arena, .{
         .name = mt.name,
-        .params = try mt.t.arena.dupe(ast.Payload.Param, fn_params.items),
+        .params = fn_params,
         .return_type = return_type,
         .body = try block_scope.complete(),
     });
@@ -127,7 +115,7 @@ pub fn transMacro(mt: *MacroTranslator) ParseError!void {
 
     // Check if the macro only uses other blank macros.
     while (true) {
-        switch (mt.peek().?) {
+        switch (mt.tokens[mt.i].id) {
             .identifier, .extended_identifier => {
                 const tok = mt.tokens[mt.i + 1];
                 const slice = mt.source[tok.start..tok.end];
@@ -571,7 +559,6 @@ fn escapeUnprintables(mt: *MacroTranslator) ![]const u8 {
 
 fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
     const tok = mt.next().?;
-    const slice = mt.tokSlice();
     switch (tok) {
         .char_literal,
         .char_literal_utf_8,
@@ -579,6 +566,7 @@ fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
         .char_literal_utf_32,
         .char_literal_wide,
         => {
+            const slice = mt.tokSlice();
             if (slice[0] != '\'' or slice[1] == '\\' or slice.len == 3) {
                 return ZigTag.char_literal.create(mt.t.arena, try mt.escapeUnprintables());
             } else {
@@ -1221,7 +1209,7 @@ fn parseCUnaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
                 break :blk inner;
             } else try mt.parseCUnaryExpr(scope);
 
-            return mt.t.createHelperCallNode(.sizeof, &.{ operand });
+            return mt.t.createHelperCallNode(.sizeof, &.{operand});
         },
         .keyword_alignof => {
             // TODO this won't work if using <stdalign.h>'s
