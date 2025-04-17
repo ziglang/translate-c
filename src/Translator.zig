@@ -68,12 +68,6 @@ global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// declaration whether or not the name is available.
 weak_global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 
-/// Set of builtins whose source needs to be rendered.
-needed_builtins: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-
-/// Set of helpers whose source needs to be rendered.
-needed_helpers: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-
 /// Set of identifiers known to refer to typedef declarations.
 /// Used when parsing macros.
 typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
@@ -81,13 +75,13 @@ typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// The lhs lval of a compound assignment expression.
 compound_assign_dummy: ?ZigNode = null,
 
-fn getMangle(t: *Translator) u32 {
+pub fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
     return t.mangle_count;
 }
 
 /// Convert an `aro.Source.Location` to a 'file:line:column' string.
-fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
+pub fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
     const source = t.comp.getSource(loc.id);
     const line_col = source.lineCol(loc);
     const filename = source.path;
@@ -103,7 +97,7 @@ fn maybeSuppressResult(t: *Translator, used: ResultUsed, result: ZigNode) TransE
     return ZigTag.discard.create(t.arena, .{ .should_skip = false, .value = result });
 }
 
-fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
+pub fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
     const gop = try t.global_scope.sym_table.getOrPut(t.gpa, name);
     if (!gop.found_existing) {
         gop.value_ptr.* = decl_node;
@@ -175,8 +169,6 @@ pub fn translate(
         translator.anonymous_record_field_names.deinit(gpa);
         translator.typedefs.deinit(gpa);
         translator.global_scope.deinit();
-        translator.needed_builtins.deinit(gpa);
-        translator.needed_helpers.deinit(gpa);
     }
 
     try translator.prepopulateGlobalNameTable();
@@ -193,27 +185,12 @@ pub fn translate(
     var buf: std.ArrayList(u8) = .init(gpa);
     defer buf.deinit();
 
-    for (translator.needed_builtins.values()) |source| {
-        try buf.appendSlice(source);
-    }
-
-    if (translator.needed_helpers.entries.len > 0) {
-        if (buf.items.len != 0) try buf.append('\n');
-
-        try buf.appendSlice("pub const __helpers = struct {\n");
-        for (translator.needed_helpers.values(), 0..) |source, i| {
-            if (i != 0) try buf.append('\n');
-
-            // Properly indent the functions.
-            var it = std.mem.splitScalar(u8, source, '\n');
-            while (it.next()) |line| {
-                if (line.len != 0) try buf.appendSlice("    ");
-                try buf.appendSlice(line);
-                if (it.rest().len != 0) try buf.append('\n');
-            }
-        }
-        try buf.appendSlice("\n};\n\n");
-    }
+    try buf.appendSlice(
+        \\pub const __builtin = @import("c_builtins");
+        \\pub const __helpers = @import("helpers");
+        \\
+        \\
+    );
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
@@ -286,6 +263,27 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
             else => unreachable,
         }
     }
+
+    for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
+        if (macro.is_builtin) continue;
+        if (!t.isSelfDefinedMacro(name, macro)) {
+            try t.global_names.put(t.gpa, name, {});
+        }
+    }
+}
+
+/// Determines whether macro is of the form: `#define FOO FOO` (Possibly with trailing tokens)
+/// Macros of this form will not be translated.
+fn isSelfDefinedMacro(t: *Translator, name: []const u8, macro: aro.Preprocessor.Macro) bool {
+    if (macro.is_func) return false;
+
+    if (macro.tokens.len < 1) return false;
+    const first_tok = macro.tokens[0];
+
+    const source = t.comp.getSource(macro.loc.id);
+    const slice = source.buf[first_tok.start..first_tok.end];
+
+    return std.mem.eql(u8, name, slice);
 }
 
 // =======================
@@ -336,7 +334,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
     }
 }
 
-const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
+pub const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "uint8_t", "u8" },
     .{ "int8_t", "i8" },
     .{ "uint16_t", "u16" },
@@ -2573,17 +2571,19 @@ fn transBuiltinCall(
         else => unreachable,
     };
 
-    // Overriding a builtin function is a hard error in C
-    // so we do not need to worry about aliasing.
-    try t.needed_builtins.put(t.gpa, builtin_name, builtin.source);
-
     const arg_nodes = try t.arena.alloc(ZigNode, call.args.len);
     for (call.args, arg_nodes) |c_arg, *zig_arg| {
         zig_arg.* = try t.transExprCoercing(scope, c_arg, used);
     }
 
+    const builtin_identifier = try ZigTag.identifier.create(t.arena, "__builtin");
+    const field_access = try ZigTag.field_access.create(t.arena, .{
+        .lhs = builtin_identifier,
+        .field_name = builtin.name,
+    });
+
     const res = try ZigTag.call.create(t.arena, .{
-        .lhs = try ZigTag.identifier.create(t.arena, builtin_name),
+        .lhs = field_access,
         .args = arg_nodes,
     });
     if (call.qt.is(t.comp, .void)) return res;
@@ -3064,48 +3064,7 @@ fn createBinOpNode(
     return ZigNode.initPayload(&payload.base);
 }
 
-fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args_opt: ?[]const ZigNode) !ZigNode {
-    switch (name) {
-        .div => {
-            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "div", helpers.sources.div);
-        },
-        .rem => {
-            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "signedRemainder", helpers.sources.signedRemainder);
-            try t.needed_helpers.put(t.gpa, "rem", helpers.sources.rem);
-        },
-        .CAST_OR_CALL => {
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "CAST_OR_CALL", helpers.sources.CAST_OR_CALL);
-        },
-        .L_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "L_SUFFIX", helpers.sources.L_SUFFIX);
-        },
-        .LL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "LL_SUFFIX", helpers.sources.LL_SUFFIX);
-        },
-        .U_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "U_SUFFIX", helpers.sources.U_SUFFIX);
-        },
-        .UL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "UL_SUFFIX", helpers.sources.UL_SUFFIX);
-        },
-        .ULL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "ULL_SUFFIX", helpers.sources.ULL_SUFFIX);
-        },
-        inline else => |tag| {
-            try t.needed_helpers.put(t.gpa, @tagName(tag), @field(helpers.sources, @tagName(tag)));
-        },
-    }
-
+pub fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(@import("helpers")), args_opt: ?[]const ZigNode) !ZigNode {
     if (args_opt) |args| {
         return ZigTag.helper_call.create(t.arena, .{
             .name = @tagName(name),
@@ -3143,11 +3102,8 @@ fn transMacros(t: *Translator) !void {
     var pattern_list = try PatternList.init(t.gpa);
     defer pattern_list.deinit(t.gpa);
 
-    var it = t.pp.defines.iterator();
-    while (it.next()) |define_kv| {
-        const name = define_kv.key_ptr.*;
-        const macro = define_kv.value_ptr.*;
-
+    for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
+        if (macro.is_builtin) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
@@ -3177,11 +3133,11 @@ fn transMacros(t: *Translator) !void {
                     .init = try t.createHelperCallNode(impl, null),
                 });
                 try t.addTopLevelDecl(name, decl);
-                return;
+                continue;
             }
         }
 
-        if (t.checkTranslatableMacro(macro.tokens, macro.params)) |err| {
+        if (t.checkTranslatableMacro(tok_list.items, macro.params)) |err| {
             switch (err) {
                 .undefined_identifier => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
                 .invalid_arg_usage => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
@@ -3192,6 +3148,7 @@ fn transMacros(t: *Translator) !void {
         var macro_translator: MacroTranslator = .{
             .t = t,
             .tokens = tok_list.items,
+            .source = t.comp.getSource(macro.loc.id).buf,
             .name = name,
             .macro = macro,
         };
@@ -3223,15 +3180,14 @@ fn checkTranslatableMacro(t: *Translator, tokens: []const CToken, params: []cons
                 last_is_type_kw = true;
                 continue;
             },
+            .macro_param, .macro_param_no_expand => {
+                if (last_is_type_kw) {
+                    return .{ .invalid_arg_usage = params[token.end] };
+                }
+            },
             .identifier, .extended_identifier => {
                 const identifier = t.pp.tokSlice(token);
-                const is_param = for (params) |param| {
-                    if (mem.eql(u8, identifier, param)) break true;
-                } else false;
-                if (is_param and last_is_type_kw) {
-                    return .{ .invalid_arg_usage = identifier };
-                }
-                if (!t.global_scope.contains(identifier) and !builtins.map.has(identifier) and !is_param) {
+                if (!t.global_scope.contains(identifier) and !builtins.map.has(identifier)) {
                     return .{ .undefined_identifier = identifier };
                 }
             },
@@ -3307,7 +3263,7 @@ fn getContainerTypeOf(t: *Translator, ref: ZigNode) ?ZigNode {
     return null;
 }
 
-fn getFnProto(t: *Translator, ref: ZigNode) ?*ast.Payload.Func {
+pub fn getFnProto(t: *Translator, ref: ZigNode) ?*ast.Payload.Func {
     const init = if (ref.castTag(.var_decl)) |v|
         v.data.init orelse return null
     else if (ref.castTag(.var_simple) orelse ref.castTag(.pub_var_simple)) |v|

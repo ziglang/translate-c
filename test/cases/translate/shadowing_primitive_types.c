@@ -6,7 +6,6 @@ typedef enum {
 } BadEnum;
 
 // translate
-// expect=fail
 //
 // pub export var @"anyerror": c_uint = 2;
 //

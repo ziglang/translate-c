@@ -4,7 +4,6 @@ extern int c;
 #define BAR() (c*c)
 
 // translate
-// expect=fail
 //
 // pub extern var c: c_int;
 //

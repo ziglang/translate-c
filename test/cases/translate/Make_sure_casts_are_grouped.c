@@ -8,9 +8,8 @@ typedef struct _XDisplay Display;
 
 
 // translate
-// expect=fail
 //
-// pub inline fn DefaultScreen(dpy: anytype) @TypeOf(@import("std").zig.c_translation.cast(_XPrivDisplay, dpy).*.default_screen) {
+// pub inline fn DefaultScreen(dpy: anytype) @TypeOf(__helpers.cast(_XPrivDisplay, dpy).*.default_screen) {
 //     _ = &dpy;
-//     return @import("std").zig.c_translation.cast(_XPrivDisplay, dpy).*.default_screen;
+//     return __helpers.cast(_XPrivDisplay, dpy).*.default_screen;
 // }

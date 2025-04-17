@@ -1,6 +1,7 @@
 #define FOO __builtin_popcount
 
 // translate
-// expect=fail
 //
-// pub const FOO = __builtin_popcount;
+// pub const __builtin = @import("c_builtins");
+//
+// pub const FOO = __builtin.popcount;

@@ -6,7 +6,6 @@ extern float foo;
 #define BAR_TWICE BAR * 2.0f
 
 // translate
-// expect=fail
 //
 // pub extern var foo: f32;
 //

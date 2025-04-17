@@ -2,8 +2,7 @@
 #define FOO ((int)0x8000)
 
 // translate
-// expect=fail
 //
-// pub const NULL = @import("std").zig.c_translation.cast(?*anyopaque, @as(c_int, 0));
+// pub const NULL = __helpers.cast(?*anyopaque, @as(c_int, 0));
 //
-// pub const FOO = @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hex));
+// pub const FOO = __helpers.cast(c_int, __helpers.promoteIntLiteral(c_int, 0x8000, .hex));

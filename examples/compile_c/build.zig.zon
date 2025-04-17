@@ -1,0 +1,11 @@
+.{
+    .name = .compile_c,
+    .version = "0.0.0",
+    .fingerprint = 0x29391e092030566f,
+    .paths = .{""},
+
+    .dependencies = .{
+        // Install by running `zig fetch --save git+https://github.com/ziglang/translate-c`.
+        .translate_c = .{ .path = "../../" },
+    },
+}

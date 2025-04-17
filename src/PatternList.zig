@@ -10,7 +10,8 @@ const Translator = @import("Translator.zig");
 const Error = Translator.Error;
 pub const MacroProcessingError = Error || error{UnexpectedMacroToken};
 
-const Template = struct { []const u8, std.meta.DeclEnum(helpers.sources) };
+const Impl = std.meta.DeclEnum(@import("helpers"));
+const Template = struct { []const u8, Impl };
 
 /// Templates must be function-like macros
 /// first element is macro source, second element is the name of the function
@@ -85,7 +86,7 @@ const templates = [_]Template{
 
 const Pattern = struct {
     slicer: MacroSlicer,
-    impl: std.meta.DeclEnum(helpers.sources),
+    impl: Impl,
 
     fn init(pl: *Pattern, allocator: mem.Allocator, template: Template) Error!void {
         const source = template[0];
@@ -164,7 +165,7 @@ pub fn deinit(pl: *PatternList, allocator: mem.Allocator) void {
     pl.* = undefined;
 }
 
-pub fn match(pl: PatternList, ms: MacroSlicer) Error!?std.meta.DeclEnum(helpers.sources) {
+pub fn match(pl: PatternList, ms: MacroSlicer) Error!?Impl {
     for (pl.patterns) |pattern| if (pattern.matches(ms)) return pattern.impl;
     return null;
 }
@@ -240,7 +241,7 @@ test "Macro matching" {
             allocator: mem.Allocator,
             pattern_list: PatternList,
             source: []const u8,
-            comptime expected_match: ?std.meta.DeclEnum(helpers.sources),
+            comptime expected_match: ?Impl,
         ) !void {
             var tok_list = std.ArrayList(CToken).init(allocator);
             defer tok_list.deinit();

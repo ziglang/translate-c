@@ -6,7 +6,6 @@ int *foo = 0;
                              | (*((unsigned char *)(p) + 2) << 16))
 
 // translate
-// expect=fail
 //
 // pub inline fn FOO() @TypeOf((foo + @as(c_int, 2)).*) {
 //     return (foo + @as(c_int, 2)).*;
@@ -14,7 +13,7 @@ int *foo = 0;
 //
 // pub const VALUE = ((((@as(c_int, 1) + (@as(c_int, 2) * @as(c_int, 3))) + (@as(c_int, 4) * @as(c_int, 5))) + @as(c_int, 6)) << @as(c_int, 7)) | @intFromBool(@as(c_int, 8) == @as(c_int, 9));
 //
-// pub inline fn _AL_READ3BYTES(p: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]u8, p).* | ((@import("std").zig.c_translation.cast([*c]u8, p) + @as(c_int, 1)).* << @as(c_int, 8))) | ((@import("std").zig.c_translation.cast([*c]u8, p) + @as(c_int, 2)).* << @as(c_int, 16))) {
+// pub inline fn _AL_READ3BYTES(p: anytype) @TypeOf((__helpers.cast([*c]u8, p).* | ((__helpers.cast([*c]u8, p) + @as(c_int, 1)).* << @as(c_int, 8))) | ((__helpers.cast([*c]u8, p) + @as(c_int, 2)).* << @as(c_int, 16))) {
 //     _ = &p;
-//     return (@import("std").zig.c_translation.cast([*c]u8, p).* | ((@import("std").zig.c_translation.cast([*c]u8, p) + @as(c_int, 1)).* << @as(c_int, 8))) | ((@import("std").zig.c_translation.cast([*c]u8, p) + @as(c_int, 2)).* << @as(c_int, 16));
+//     return (__helpers.cast([*c]u8, p).* | ((__helpers.cast([*c]u8, p) + @as(c_int, 1)).* << @as(c_int, 8))) | ((__helpers.cast([*c]u8, p) + @as(c_int, 2)).* << @as(c_int, 16));
 // }

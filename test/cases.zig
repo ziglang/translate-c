@@ -5,6 +5,8 @@ pub fn addCaseTests(
     b: *std.Build,
     tests_step: *std.Build.Step,
     translate_exes: []const *std.Build.Step.Compile,
+    builtins_module: *std.Build.Module,
+    helpers_module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     skip_translate: bool,
     skip_run_translated: bool,
@@ -44,6 +46,8 @@ pub fn addCaseTests(
                     .optimize = .Debug,
                     .target = case.target,
                     .translate_c_exe = exe,
+                    .builtins_module = builtins_module,
+                    .helpers_module = helpers_module,
                 });
                 translate_c.step.name = b.fmt("{s} TranslateC", .{annotated_case_name});
 
@@ -62,6 +66,8 @@ pub fn addCaseTests(
                     .optimize = .Debug,
                     .target = case.target,
                     .translate_c_exe = exe,
+                    .builtins_module = builtins_module,
+                    .helpers_module = helpers_module,
                 });
                 translate_c.step.name = b.fmt("{s} TranslateC", .{annotated_case_name});
 

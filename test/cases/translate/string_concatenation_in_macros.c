@@ -3,7 +3,6 @@
 #define BAZ "oh, " FOO
 
 // translate
-// expect=fail
 //
 // pub const FOO = "hello";
 //

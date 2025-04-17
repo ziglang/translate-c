@@ -3,7 +3,6 @@
 #define BAR FOO BAZ
 
 // translate
-// expect=fail
 //
 // pub const FOO = "hello";
 //

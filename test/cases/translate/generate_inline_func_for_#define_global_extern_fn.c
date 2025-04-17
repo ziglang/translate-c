@@ -5,7 +5,6 @@ extern char (*fn_ptr2)(int, float);
 #define bar fn_ptr2
 
 // translate
-// expect=fail
 //
 // pub extern var fn_ptr: ?*const fn () callconv(.c) void;
 //

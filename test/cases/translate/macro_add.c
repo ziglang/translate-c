@@ -4,7 +4,6 @@
 #define RCC_BASE              (D3_AHB1PERIPH_BASE + 0x4400UL)
 
 // translate
-// expect=fail
 //
 // pub const PERIPH_BASE = @as(c_ulong, 0x40000000);
 //

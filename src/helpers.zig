@@ -3,38 +3,11 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const math = std.math;
 
-/// When using `splitSource` have dependencies that also need to be rendered.
-pub const sources = struct {
-    pub const ArithmeticConversion = splitSource("helpers/arithmetic_conversion.zig");
-    pub const cast = @embedFile("helpers/cast.zig");
-    pub const div = splitSource("helpers/div.zig");
-    pub const FlexibleArrayType = @embedFile("helpers/flexible_asrray_type.zig");
-    pub const rem = splitSource("helpers/rem.zig");
-    pub const promoteIntLiteral = splitSource("helpers/promote_int_literal.zig");
-    pub const shuffleVectorIndex = @embedFile("helpers/shuffle_vector_index.zig");
-    pub const signedRemainder = @embedFile("helpers/signed_remainder.zig");
-    pub const sizeof = @embedFile("helpers/sizeof.zig");
+const helpers = @import("helpers");
 
-    pub const CAST_OR_CALL = splitSource("helpers/CAST_OR_CALL.zig");
-    pub const DISCARD = @embedFile("helpers/DISCARD.zig");
-    pub const F_SUFFIX = @embedFile("helpers/F_SUFFIX.zig");
-    pub const L_SUFFIX = splitSource("helpers/L_SUFFIX.zig");
-    pub const LL_SUFFIX = splitSource("helpers/LL_SUFFIX.zig");
-    pub const U_SUFFIX = splitSource("helpers/U_SUFFIX.zig");
-    pub const UL_SUFFIX = splitSource("helpers/UL_SUFFIX.zig");
-    pub const ULL_SUFFIX = splitSource("helpers/ULL_SUFFIX.zig");
-    pub const WL_CONTAINER_OF = @embedFile("helpers/WL_CONTAINER_OF.zig");
-};
+const cast = helpers.cast;
 
-fn splitSource(path: []const u8) []const u8 {
-    var it = std.mem.splitSequence(u8, @embedFile(path), "BEGIN_SOURCE\n");
-    _ = it.first();
-    return it.rest();
-}
-
-const cast = @import("helpers/cast.zig").cast;
-
-test "cast" {
+test cast {
     var i = @as(i64, 10);
 
     try testing.expect(cast(*u8, 16) == @as(*u8, @ptrFromInt(16)));
@@ -78,9 +51,9 @@ test "cast" {
     try testing.expect(fn_ptr != null);
 }
 
-const sizeof = @import("helpers/sizeof.zig").sizeof;
+const sizeof = helpers.sizeof;
 
-test "sizeof" {
+test sizeof {
     const S = extern struct { a: u32 };
 
     const ptr_size = @sizeOf(*anyopaque);
@@ -124,9 +97,9 @@ test "sizeof" {
     try testing.expect(sizeof(anyopaque) == 1);
 }
 
-const promoteIntLiteral = @import("helpers/promote_int_literal.zig").promoteIntLiteral;
+const promoteIntLiteral = helpers.promoteIntLiteral;
 
-test "promoteIntLiteral" {
+test promoteIntLiteral {
     const signed_hex = promoteIntLiteral(c_int, math.maxInt(c_int) + 1, .hex);
     try testing.expectEqual(c_uint, @TypeOf(signed_hex));
 
@@ -144,9 +117,9 @@ test "promoteIntLiteral" {
     }
 }
 
-const shuffleVectorIndex = @import("helpers/shuffle_vector_index.zig").shuffleVectorIndex;
+const shuffleVectorIndex = helpers.shuffleVectorIndex;
 
-test "shuffleVectorIndex" {
+test shuffleVectorIndex {
     const vector_len: usize = 4;
 
     _ = shuffleVectorIndex(-1, vector_len);
@@ -162,9 +135,9 @@ test "shuffleVectorIndex" {
     try testing.expect(shuffleVectorIndex(7, vector_len) == -4);
 }
 
-const FlexibleArrayType = @import("helpers/flexible_asrray_type.zig").FlexibleArrayType;
+const FlexibleArrayType = helpers.FlexibleArrayType;
 
-test "Flexible Array Type" {
+test FlexibleArrayType {
     const Container = extern struct {
         size: usize,
     };
@@ -175,16 +148,16 @@ test "Flexible Array Type" {
     try testing.expectEqual(FlexibleArrayType(*const volatile Container, c_int), [*c]const volatile c_int);
 }
 
-const signedRemainder = @import("helpers/signed_remainder.zig").signedRemainder;
+const signedRemainder = helpers.signedRemainder;
 
-test "signedRemainder" {
+test signedRemainder {
     // TODO add test
     return error.SkipZigTest;
 }
 
-const ArithmeticConversion = @import("helpers/arithmetic_conversion.zig").ArithmeticConversion;
+const ArithmeticConversion = helpers.ArithmeticConversion;
 
-test "ArithmeticConversion" {
+test ArithmeticConversion {
     // Promotions not necessarily the same for other platforms
     if (builtin.target.cpu.arch != .x86_64 or builtin.target.os.tag != .linux) return error.SkipZigTest;
 
@@ -225,16 +198,15 @@ test "ArithmeticConversion" {
     try Test.checkPromotion(usize, c_int, c_ulong);
 }
 
-const F_SUFFIX = @import("helpers/F_SUFFIX.zig").F_SUFFIX;
-const U_SUFFIX = @import("helpers/U_SUFFIX.zig").U_SUFFIX;
-const L_SUFFIX = @import("helpers/L_SUFFIX.zig").L_SUFFIX;
-const UL_SUFFIX = @import("helpers/UL_SUFFIX.zig").UL_SUFFIX;
-const LL_SUFFIX = @import("helpers/LL_SUFFIX.zig").LL_SUFFIX;
-const ULL_SUFFIX = @import("helpers/ULL_SUFFIX.zig").ULL_SUFFIX;
+const F_SUFFIX = helpers.F_SUFFIX;
 
-test "Macro suffix functions" {
+test F_SUFFIX {
     try testing.expect(@TypeOf(F_SUFFIX(1)) == f32);
+}
 
+const U_SUFFIX = helpers.U_SUFFIX;
+
+test U_SUFFIX {
     try testing.expect(@TypeOf(U_SUFFIX(1)) == c_uint);
     if (math.maxInt(c_ulong) > math.maxInt(c_uint)) {
         try testing.expect(@TypeOf(U_SUFFIX(math.maxInt(c_uint) + 1)) == c_ulong);
@@ -242,7 +214,11 @@ test "Macro suffix functions" {
     if (math.maxInt(c_ulonglong) > math.maxInt(c_ulong)) {
         try testing.expect(@TypeOf(U_SUFFIX(math.maxInt(c_ulong) + 1)) == c_ulonglong);
     }
+}
 
+const L_SUFFIX = helpers.L_SUFFIX;
+
+test L_SUFFIX {
     try testing.expect(@TypeOf(L_SUFFIX(1)) == c_long);
     if (math.maxInt(c_long) > math.maxInt(c_int)) {
         try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_int) + 1)) == c_long);
@@ -250,13 +226,23 @@ test "Macro suffix functions" {
     if (math.maxInt(c_longlong) > math.maxInt(c_long)) {
         try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_long) + 1)) == c_longlong);
     }
+}
+const UL_SUFFIX = helpers.UL_SUFFIX;
 
+test UL_SUFFIX {
     try testing.expect(@TypeOf(UL_SUFFIX(1)) == c_ulong);
     if (math.maxInt(c_ulonglong) > math.maxInt(c_ulong)) {
         try testing.expect(@TypeOf(UL_SUFFIX(math.maxInt(c_ulong) + 1)) == c_ulonglong);
     }
+}
+const LL_SUFFIX = helpers.LL_SUFFIX;
 
+test LL_SUFFIX {
     try testing.expect(@TypeOf(LL_SUFFIX(1)) == c_longlong);
+}
+const ULL_SUFFIX = helpers.ULL_SUFFIX;
+
+test ULL_SUFFIX {
     try testing.expect(@TypeOf(ULL_SUFFIX(1)) == c_ulonglong);
 }
 
@@ -287,9 +273,9 @@ test "Extended C ABI casting" {
     }
 }
 
-const WL_CONTAINER_OF = @import("helpers/WL_CONTAINER_OF.zig").WL_CONTAINER_OF;
+const WL_CONTAINER_OF = helpers.WL_CONTAINER_OF;
 
-test "WL_CONTAINER_OF" {
+test WL_CONTAINER_OF {
     const S = struct {
         a: u32 = 0,
         b: u32 = 0,
@@ -300,7 +286,7 @@ test "WL_CONTAINER_OF" {
     try testing.expectEqual(&x, ptr);
 }
 
-const CAST_OR_CALL = @import("helpers/CAST_OR_CALL.zig").CAST_OR_CALL;
+const CAST_OR_CALL = helpers.CAST_OR_CALL;
 
 test "CAST_OR_CALL casting" {
     const arg: c_int = 1000;
