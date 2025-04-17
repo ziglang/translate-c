@@ -42,7 +42,9 @@ union U {
 #define NESTED_COMMA_OPERATOR (1, (2, 3))
 #define NESTED_COMMA_OPERATOR_LHS (1, 2), 3
 
-#include <stdint.h>
+// TODO same issue as with the run tests
+// #include <stdint.h>
+typedef unsigned long long uintptr_t;
 #if !defined(__UINTPTR_MAX__)
 typedef _Bool uintptr_t;
 #endif
