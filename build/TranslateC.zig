@@ -191,7 +191,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     try argv_list.append(out_path);
 
     const libc = try std.zig.LibCInstallation.findNative(.{
-        .target = translate_c.target,
+        .target = translate_c.target.result,
         .allocator = b.allocator,
     });
     if (libc.include_dir) |path| {
