@@ -68,12 +68,6 @@ global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// declaration whether or not the name is available.
 weak_global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 
-/// Set of builtins whose source needs to be rendered.
-needed_builtins: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-
-/// Set of helpers whose source needs to be rendered.
-needed_helpers: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-
 /// Set of identifiers known to refer to typedef declarations.
 /// Used when parsing macros.
 typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
@@ -175,8 +169,6 @@ pub fn translate(
         translator.anonymous_record_field_names.deinit(gpa);
         translator.typedefs.deinit(gpa);
         translator.global_scope.deinit();
-        translator.needed_builtins.deinit(gpa);
-        translator.needed_helpers.deinit(gpa);
     }
 
     try translator.prepopulateGlobalNameTable();
@@ -193,27 +185,12 @@ pub fn translate(
     var buf: std.ArrayList(u8) = .init(gpa);
     defer buf.deinit();
 
-    for (translator.needed_builtins.values()) |source| {
-        try buf.appendSlice(source);
-    }
-
-    if (translator.needed_helpers.entries.len > 0) {
-        if (buf.items.len != 0) try buf.append('\n');
-
-        try buf.appendSlice("pub const __helpers = struct {\n");
-        for (translator.needed_helpers.values(), 0..) |source, i| {
-            if (i != 0) try buf.append('\n');
-
-            // Properly indent the functions.
-            var it = std.mem.splitScalar(u8, source, '\n');
-            while (it.next()) |line| {
-                if (line.len != 0) try buf.appendSlice("    ");
-                try buf.appendSlice(line);
-                if (it.rest().len != 0) try buf.append('\n');
-            }
-        }
-        try buf.appendSlice("\n};\n\n");
-    }
+    try buf.appendSlice(
+        \\pub const __builtin = @import("c_builtins");
+        \\pub const __helpers = @import("helpers");
+        \\
+        \\
+    );
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
@@ -2594,17 +2571,19 @@ fn transBuiltinCall(
         else => unreachable,
     };
 
-    // Overriding a builtin function is a hard error in C
-    // so we do not need to worry about aliasing.
-    try t.needed_builtins.put(t.gpa, builtin_name, builtin.source);
-
     const arg_nodes = try t.arena.alloc(ZigNode, call.args.len);
     for (call.args, arg_nodes) |c_arg, *zig_arg| {
         zig_arg.* = try t.transExprCoercing(scope, c_arg, used);
     }
 
+    const builtin_identifier = try ZigTag.identifier.create(t.arena, "__builtin");
+    const field_access = try ZigTag.field_access.create(t.arena, .{
+        .lhs = builtin_identifier,
+        .field_name = builtin.name,
+    });
+
     const res = try ZigTag.call.create(t.arena, .{
-        .lhs = try ZigTag.identifier.create(t.arena, builtin_name),
+        .lhs = field_access,
         .args = arg_nodes,
     });
     if (call.qt.is(t.comp, .void)) return res;
@@ -3085,48 +3064,7 @@ fn createBinOpNode(
     return ZigNode.initPayload(&payload.base);
 }
 
-pub fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(helpers.sources), args_opt: ?[]const ZigNode) !ZigNode {
-    switch (name) {
-        .div => {
-            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "div", helpers.sources.div);
-        },
-        .rem => {
-            try t.needed_helpers.put(t.gpa, "ArithmeticConversion", helpers.sources.ArithmeticConversion);
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "signedRemainder", helpers.sources.signedRemainder);
-            try t.needed_helpers.put(t.gpa, "rem", helpers.sources.rem);
-        },
-        .CAST_OR_CALL => {
-            try t.needed_helpers.put(t.gpa, "cast", helpers.sources.cast);
-            try t.needed_helpers.put(t.gpa, "CAST_OR_CALL", helpers.sources.CAST_OR_CALL);
-        },
-        .L_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "L_SUFFIX", helpers.sources.L_SUFFIX);
-        },
-        .LL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "LL_SUFFIX", helpers.sources.LL_SUFFIX);
-        },
-        .U_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "U_SUFFIX", helpers.sources.U_SUFFIX);
-        },
-        .UL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "UL_SUFFIX", helpers.sources.UL_SUFFIX);
-        },
-        .ULL_SUFFIX => {
-            try t.needed_helpers.put(t.gpa, "promoteIntLiteral", helpers.sources.promoteIntLiteral);
-            try t.needed_helpers.put(t.gpa, "ULL_SUFFIX", helpers.sources.ULL_SUFFIX);
-        },
-        inline else => |tag| {
-            try t.needed_helpers.put(t.gpa, @tagName(tag), @field(helpers.sources, @tagName(tag)));
-        },
-    }
-
+pub fn createHelperCallNode(t: *Translator, name: std.meta.DeclEnum(@import("helpers")), args_opt: ?[]const ZigNode) !ZigNode {
     if (args_opt) |args| {
         return ZigTag.helper_call.create(t.arena, .{
             .name = @tagName(name),

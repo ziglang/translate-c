@@ -20,11 +20,33 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
-        .name = "translate-c",
+    const c_builtins = b.addModule("c_builtins", .{
+        .root_source_file = b.path("lib/c_builtins.zig"),
+    });
+
+    const helpers = b.addModule("helpers", .{
+        .root_source_file = b.path("lib/helpers.zig"),
+    });
+
+    const translate_c_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{
+                .name = "c_builtins",
+                .module = c_builtins,
+            },
+            .{
+                .name = "helpers",
+                .module = helpers,
+            },
+        },
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "translate-c",
+        .root_module = translate_c_module,
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
@@ -85,6 +107,8 @@ pub fn build(b: *std.Build) !void {
                 .optimize = mode,
             });
             unit_tests.root_module.addImport("aro", aro.module("aro"));
+            unit_tests.root_module.addImport("helpers", helpers);
+            unit_tests.root_module.addImport("c_builtins", c_builtins);
             const run_unit_tests = b.addRunArtifact(unit_tests);
             unit_test_step.dependOn(&run_unit_tests.step);
         }
@@ -117,6 +141,8 @@ pub fn build(b: *std.Build) !void {
                 .use_lld = use_llvm,
             });
             test_exe.root_module.addImport("aro", test_aro.module("aro"));
+            test_exe.root_module.addImport("helpers", helpers);
+            test_exe.root_module.addImport("c_builtins", c_builtins);
 
             // Ensure that a binary is emitted.
             _ = test_exe.getEmittedBin();
@@ -138,12 +164,16 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = mode,
                 .translate_c_exe = translate_exe,
+                .builtins_module = c_builtins,
+                .helpers_module = helpers,
             }).createModule());
             macro_tests.root_module.addImport("macros_not_utf8.h", TranslateC.create(b, .{
                 .root_source_file = b.path("test/macros_not_utf8.h"),
                 .target = target,
                 .optimize = mode,
                 .translate_c_exe = translate_exe,
+                .builtins_module = c_builtins,
+                .helpers_module = helpers,
             }).createModule());
 
             const run_macro_tests = b.addRunArtifact(macro_tests);
@@ -157,6 +187,8 @@ pub fn build(b: *std.Build) !void {
         b,
         test_step,
         translate_exes,
+        c_builtins,
+        helpers,
         target,
         skip_translate,
         skip_run_translated,

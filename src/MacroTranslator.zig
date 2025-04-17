@@ -609,7 +609,11 @@ fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
                 return ZigTag.type.create(mt.t.arena, ty);
             }
             if (builtins.map.get(mangled_name)) |builtin| {
-                try mt.t.needed_builtins.put(mt.t.gpa, mangled_name, builtin.source);
+                const builtin_identifier = try ZigTag.identifier.create(mt.t.arena, "__builtin");
+                return ZigTag.field_access.create(mt.t.arena, .{
+                    .lhs = builtin_identifier,
+                    .field_name = builtin.name,
+                });
             }
 
             const identifier = try ZigTag.identifier.create(mt.t.arena, mangled_name);
@@ -910,7 +914,11 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope, allow_fail:
                     return try ZigTag.type.create(mt.t.arena, ty);
                 }
                 if (builtins.map.get(mangled_name)) |builtin| {
-                    try mt.t.needed_builtins.put(mt.t.gpa, mangled_name, builtin.source);
+                    const builtin_identifier = try ZigTag.identifier.create(mt.t.arena, "__builtin");
+                    return try ZigTag.field_access.create(mt.t.arena, .{
+                        .lhs = builtin_identifier,
+                        .field_name = builtin.name,
+                    });
                 }
 
                 return try ZigTag.identifier.create(mt.t.arena, mangled_name);

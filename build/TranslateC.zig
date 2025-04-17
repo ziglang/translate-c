@@ -10,6 +10,8 @@ pub const base_id: Step.Id = .custom;
 
 step: Step,
 translate_c_exe: *Step.Compile,
+builtins_module: *std.Build.Module,
+helpers_module: *std.Build.Module,
 source: std.Build.LazyPath,
 include_dirs: std.ArrayList(std.Build.Module.IncludeDir),
 target: std.Build.ResolvedTarget,
@@ -23,6 +25,8 @@ pub const Options = struct {
     optimize: std.builtin.OptimizeMode,
     link_libc: bool = true,
     translate_c_exe: ?*std.Build.Step.Compile = null,
+    builtins_module: ?*std.Build.Module = null,
+    helpers_module: ?*std.Build.Module = null,
     translate_c_dep_name: []const u8 = "translate-c",
     translate_c_optimize: std.builtin.OptimizeMode = .ReleaseFast,
 };
@@ -31,6 +35,12 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
     const translate_c_exe = options.translate_c_exe orelse owner.dependency(options.translate_c_dep_name, .{
         .optimize = options.translate_c_optimize,
     }).artifact("translate-c");
+    const builtins_module = options.builtins_module orelse owner.dependency(options.translate_c_dep_name, .{
+        .optimize = options.translate_c_optimize,
+    }).module("builtins");
+    const helpers_module = options.helpers_module orelse owner.dependency(options.translate_c_dep_name, .{
+        .optimize = options.translate_c_optimize,
+    }).module("helpers");
 
     const translate_c = owner.allocator.create(TranslateC) catch @panic("OOM");
     const source = options.root_source_file.dupe(owner);
@@ -42,6 +52,8 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
             .makeFn = make,
         }),
         .translate_c_exe = translate_c_exe,
+        .builtins_module = builtins_module,
+        .helpers_module = helpers_module,
         .source = source,
         .include_dirs = .init(owner.allocator),
         .target = options.target,
@@ -69,11 +81,9 @@ pub fn getOutput(translate_c: *TranslateC) std.Build.LazyPath {
 /// Creates a step to build an executable from the translated source.
 pub fn addExecutable(translate_c: *TranslateC, options: AddExecutableOptions) *Step.Compile {
     return translate_c.step.owner.addExecutable(.{
-        .root_source_file = translate_c.getOutput(),
+        .root_module = translate_c.createModule(),
         .name = options.name orelse "translated_c",
         .version = options.version,
-        .target = options.target orelse translate_c.target,
-        .optimize = options.optimize orelse translate_c.optimize,
         .linkage = options.linkage,
     });
 }
@@ -84,6 +94,19 @@ pub fn addExecutable(translate_c: *TranslateC, options: AddExecutableOptions) *S
 pub fn addModule(translate_c: *TranslateC, name: []const u8) *std.Build.Module {
     return translate_c.step.owner.addModule(name, .{
         .root_source_file = translate_c.getOutput(),
+        .target = translate_c.target,
+        .optimize = translate_c.optimize,
+        .link_libc = translate_c.link_libc,
+        .imports = &.{
+            .{
+                .name = "c_builtins",
+                .module = translate_c.builtins_module,
+            },
+            .{
+                .name = "helpers",
+                .module = translate_c.helpers_module,
+            },
+        },
     });
 }
 
@@ -96,6 +119,16 @@ pub fn createModule(translate_c: *TranslateC) *std.Build.Module {
         .target = translate_c.target,
         .optimize = translate_c.optimize,
         .link_libc = translate_c.link_libc,
+        .imports = &.{
+            .{
+                .name = "c_builtins",
+                .module = translate_c.builtins_module,
+            },
+            .{
+                .name = "helpers",
+                .module = translate_c.helpers_module,
+            },
+        },
     });
 }
 
