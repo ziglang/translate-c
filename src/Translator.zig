@@ -3188,10 +3188,6 @@ fn transMacros(t: *Translator) !void {
             }
             continue;
         }
-        try tok_list.append(.{
-            .id = .eof,
-            .source = macro.loc.id,
-        });
 
         var macro_translator: MacroTranslator = .{
             .t = t,
