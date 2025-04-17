@@ -2,7 +2,6 @@
 #define FLASH_BANK_SIZE    (FLASH_SIZE >> 1)   /* 1 MB   */
 
 // translate
-// expect=fail
 //
 // pub const FLASH_SIZE = @as(c_ulong, 0x200000);
 //

@@ -25,7 +25,6 @@
 #define SIZEOF2(x) ((int)sizeof x)
 
 // translate
-// expect=fail
 //
 // pub inline fn GUARDED_INT_ADDITION(int: anytype) @TypeOf(int + @as(c_int, 1)) {
 //     _ = &int;
@@ -39,13 +38,13 @@
 //     _ = &int;
 //     return int * @as(c_int, 3);
 // }
-// pub inline fn UNGUARDED_INT_DIVIDE(int: anytype) @TypeOf(@import("std").zig.c_translation.MacroArithmetic.div(int, @as(c_int, 4))) {
+// pub inline fn UNGUARDED_INT_DIVIDE(int: anytype) @TypeOf(__helpers.div(int, @as(c_int, 4))) {
 //     _ = &int;
-//     return @import("std").zig.c_translation.MacroArithmetic.div(int, @as(c_int, 4));
+//     return __helpers.div(int, @as(c_int, 4));
 // }
-// pub inline fn WRAPPED_RETURN(@"return": anytype) @TypeOf(@import("std").zig.c_translation.MacroArithmetic.rem(@"return", @as(c_int, 2))) {
+// pub inline fn WRAPPED_RETURN(@"return": anytype) @TypeOf(__helpers.rem(@"return", @as(c_int, 2))) {
 //     _ = &@"return";
-//     return @import("std").zig.c_translation.MacroArithmetic.rem(@"return", @as(c_int, 2));
+//     return __helpers.rem(@"return", @as(c_int, 2));
 // }
 // pub inline fn UNWRAPPED_RETURN(@"return": anytype) @TypeOf(@"return" ^ @as(c_int, 0x7F)) {
 //     _ = &@"return";
@@ -74,9 +73,9 @@
 // }
 // pub inline fn SIZEOF(x: anytype) c_int {
 //     _ = &x;
-//     return @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(x));
+//     return __helpers.cast(c_int, __helpers.sizeof(x));
 // }
 // pub inline fn SIZEOF2(x: anytype) c_int {
 //     _ = &x;
-//     return @import("std").zig.c_translation.cast(c_int, @import("std").zig.c_translation.sizeof(x));
+//     return __helpers.cast(c_int, __helpers.sizeof(x));
 // }

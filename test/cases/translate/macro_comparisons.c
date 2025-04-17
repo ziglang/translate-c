@@ -2,7 +2,6 @@
 #define MAX(a, b) ((b) > (a) ? (b) : (a))
 
 // translate
-// expect=fail
 //
 // pub inline fn MIN(a: anytype, b: anytype) @TypeOf(if (b < a) b else a) {
 //     _ = &a;

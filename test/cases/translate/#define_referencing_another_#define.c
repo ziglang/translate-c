@@ -2,7 +2,6 @@
 #define THING1 1234
 
 // translate
-// expect=fail
 //
 // pub const THING1 = @as(c_int, 1234);
 //

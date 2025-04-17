@@ -2,7 +2,6 @@
 #define BAR 1 && 2 > 4
 
 // translate
-// expect=fail
 //
 // pub inline fn FOO(x: anytype) @TypeOf(@intFromBool(x >= @as(c_int, 0)) + @intFromBool(x >= @as(c_int, 0))) {
 //     _ = &x;

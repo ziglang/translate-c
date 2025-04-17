@@ -2,7 +2,6 @@
 #define BAR FOO "c"
 
 // translate
-// expect=fail
 //
 // pub const FOO = "a" ++ "b";
 //

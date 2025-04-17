@@ -1,3 +1,5 @@
+#define ARROW a->b
+#define DOT a.b
 extern struct Foo {
     int b;
 }a;
@@ -23,3 +25,11 @@ void foo(void) {
 // }
 //
 // pub const Foo = struct_Foo;
+//
+// pub inline fn ARROW() @TypeOf(a.*.b) {
+//     return a.*.b;
+// }
+//
+// pub inline fn DOT() @TypeOf(a.b) {
+//     return a.b;
+// }

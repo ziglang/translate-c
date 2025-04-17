@@ -5,7 +5,6 @@
 #define FOOBAZ 0xfE.P-1l
 
 // translate
-// expect=fail
 //
 // pub const FOO = @as(f64, 0xf7p38);
 //

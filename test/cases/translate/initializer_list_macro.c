@@ -16,13 +16,12 @@ typedef struct { float x; } MyCStruct;
 #define B A(0.f)
 
 // translate
-// expect=fail
 //
 // pub const struct_Color = extern struct {
-//     r: u8 = @import("std").mem.zeroes(u8),
-//     g: u8 = @import("std").mem.zeroes(u8),
-//     b: u8 = @import("std").mem.zeroes(u8),
-//     a: u8 = @import("std").mem.zeroes(u8),
+//     r: u8 = 0,
+//     g: u8 = 0,
+//     b: u8 = 0,
+//     a: u8 = 0,
 // };
 // pub const Color = struct_Color;
 //
@@ -34,14 +33,14 @@ typedef struct { float x; } MyCStruct;
 // pub const LIGHTGRAY = @import("std").mem.zeroInit(CLITERAL(Color), .{ @as(c_int, 200), @as(c_int, 200), @as(c_int, 200), @as(c_int, 255) });
 //
 // pub const struct_boom_t = extern struct {
-//     i1: c_int = @import("std").mem.zeroes(c_int),
+//     i1: c_int = 0,
 // };
 // pub const boom_t = struct_boom_t;
 //
 // pub const FOO = @import("std").mem.zeroInit(boom_t, .{@as(c_int, 1)});
 //
 // pub const MyCStruct = extern struct {
-//     x: f32 = @import("std").mem.zeroes(f32),
+//     x: f32 = 0,
 // };
 //
 // pub inline fn A(_x: anytype) MyCStruct {

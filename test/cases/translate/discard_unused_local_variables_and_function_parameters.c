@@ -4,7 +4,6 @@ int bar(int x, int y) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn bar(arg_x: c_int, arg_y: c_int) c_int {
 //     var x = arg_x;

@@ -286,6 +286,27 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
             else => unreachable,
         }
     }
+
+    for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
+        if (macro.is_builtin) continue;
+        if (!t.isSelfDefinedMacro(name, macro)) {
+            try t.global_names.put(t.gpa, name, {});
+        }
+    }
+}
+
+/// Determines whether macro is of the form: `#define FOO FOO` (Possibly with trailing tokens)
+/// Macros of this form will not be translated.
+fn isSelfDefinedMacro(t: *Translator, name: []const u8, macro: aro.Preprocessor.Macro) bool {
+    if (macro.is_func) return false;
+
+    if (macro.tokens.len < 1) return false;
+    const first_tok = macro.tokens[0];
+
+    const source = t.comp.getSource(macro.loc.id);
+    const slice = source.buf[first_tok.start..first_tok.end];
+
+    return std.mem.eql(u8, name, slice);
 }
 
 // =======================
@@ -3174,11 +3195,11 @@ fn transMacros(t: *Translator) !void {
                     .init = try t.createHelperCallNode(impl, null),
                 });
                 try t.addTopLevelDecl(name, decl);
-                return;
+                continue;
             }
         }
 
-        if (t.checkTranslatableMacro(macro.tokens, macro.params)) |err| {
+        if (t.checkTranslatableMacro(tok_list.items, macro.params)) |err| {
             switch (err) {
                 .undefined_identifier => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
                 .invalid_arg_usage => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
@@ -3221,15 +3242,14 @@ fn checkTranslatableMacro(t: *Translator, tokens: []const CToken, params: []cons
                 last_is_type_kw = true;
                 continue;
             },
+            .macro_param, .macro_param_no_expand => {
+                if (last_is_type_kw) {
+                    return .{ .invalid_arg_usage = params[token.end] };
+                }
+            },
             .identifier, .extended_identifier => {
                 const identifier = t.pp.tokSlice(token);
-                const is_param = for (params) |param| {
-                    if (mem.eql(u8, identifier, param)) break true;
-                } else false;
-                if (is_param and last_is_type_kw) {
-                    return .{ .invalid_arg_usage = identifier };
-                }
-                if (!t.global_scope.contains(identifier) and !builtins.map.has(identifier) and !is_param) {
+                if (!t.global_scope.contains(identifier) and !builtins.map.has(identifier)) {
                     return .{ .undefined_identifier = identifier };
                 }
             },

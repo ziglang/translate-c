@@ -11,7 +11,6 @@ extern const long double my_longdouble = 1.0l;
 extern const long double my_extended_precision_longdouble = 1.0000000000000003l;
 
 // translate
-// expect=fail
 //
 // pub const foo = @as(f32, 3.14);
 //
@@ -27,10 +26,10 @@ extern const long double my_extended_precision_longdouble = 1.0000000000000003l;
 //
 // pub const foobar = -@as(c_longdouble, 73);
 //
-// pub export const my_float: f32 = 1.0;
+// pub export const my_float: f32 = 1;
 //
-// pub export const my_double: f64 = 1.0;
+// pub export const my_double: f64 = 1;
 //
-// pub export const my_longdouble: c_longdouble = 1.0;
+// pub export const my_longdouble: c_longdouble = 1;
 //
-// pub export const my_extended_precision_longdouble: c_longdouble = 0x1.000000000000159ep0;
+// pub export const my_extended_precision_longdouble: c_longdouble = 1.0000000000000002;

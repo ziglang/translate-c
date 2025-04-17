@@ -7,6 +7,7 @@ const aro = @import("aro");
 const CToken = aro.Tokenizer.Token;
 
 const ast = @import("ast.zig");
+const builtins = @import("builtins.zig");
 const ZigNode = ast.Node;
 const ZigTag = ZigNode.Tag;
 const Scope = @import("Scope.zig");
@@ -596,7 +597,8 @@ fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
             const param = mt.macro.params[mt.tokens[mt.i].end];
             mt.i += 1;
 
-            return try ZigTag.identifier.create(mt.t.arena, param);
+            const mangled_name = scope.getAlias(param) orelse param;
+            return try ZigTag.identifier.create(mt.t.arena, mangled_name);
         },
         .identifier, .extended_identifier => {
             const slice = mt.tokSlice();
@@ -606,6 +608,10 @@ fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
             if (Translator.builtin_typedef_map.get(mangled_name)) |ty| {
                 return ZigTag.type.create(mt.t.arena, ty);
             }
+            if (builtins.map.get(mangled_name)) |builtin| {
+                try mt.t.needed_builtins.put(mt.t.gpa, mangled_name, builtin.source);
+            }
+
             const identifier = try ZigTag.identifier.create(mt.t.arena, mangled_name);
             scope.skipVariableDiscard(mangled_name);
             refs_var: {
@@ -877,28 +883,34 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope, allow_fail:
     switch (tok) {
         .macro_param, .macro_param_no_expand => {
             const param = mt.macro.params[mt.tokens[mt.i].end];
-            mt.i += 1;
-            // Assume that this is only a cast if the next token is ')'
-            // e.g. param)<something>
-            if (mt.peek() != .r_paren and allow_fail) {
-                mt.i -= 1;
-                return null;
-            }
 
-            return try ZigTag.identifier.create(mt.t.arena, param);
+            // Assume that this is only a cast if the next token is ')'
+            // e.g. param)identifier
+            if (allow_fail and (mt.macro.tokens.len < mt.i + 3 or
+                mt.macro.tokens[mt.i + 1].id != .r_paren or
+                mt.macro.tokens[mt.i + 2].id != .identifier))
+                return null;
+
+            mt.i += 1;
+            const mangled_name = scope.getAlias(param) orelse param;
+            return try ZigTag.identifier.create(mt.t.arena, mangled_name);
         },
         .identifier, .extended_identifier => {
             const slice = mt.tokSlice();
-            mt.i += 1;
-
             const mangled_name = scope.getAlias(slice) orelse slice;
+
             if (mt.t.global_scope.blank_macros.contains(slice)) {
+                mt.i += 1;
                 return try mt.parseCSpecifierQualifierList(scope, allow_fail);
             }
 
             if (!allow_fail or mt.t.typedefs.contains(mangled_name)) {
+                mt.i += 1;
                 if (Translator.builtin_typedef_map.get(mangled_name)) |ty| {
                     return try ZigTag.type.create(mt.t.arena, ty);
+                }
+                if (builtins.map.get(mangled_name)) |builtin| {
+                    try mt.t.needed_builtins.put(mt.t.gpa, mangled_name, builtin.source);
                 }
 
                 return try ZigTag.identifier.create(mt.t.arena, mangled_name);
@@ -927,9 +939,10 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope, allow_fail:
             mt.i += 1;
 
             // struct Foo will be declared as struct_Foo by transRecordDecl
+            const identifier = mt.tokSlice();
             try mt.expect(.identifier);
 
-            const name = try std.fmt.allocPrint(mt.t.arena, "{s}_{s}", .{ tag_name, mt.tokSlice() });
+            const name = try std.fmt.allocPrint(mt.t.arena, "{s}_{s}", .{ tag_name, identifier });
             return try ZigTag.identifier.create(mt.t.arena, name);
         },
         else => {},
@@ -1094,16 +1107,18 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
         switch (mt.peek()) {
             .period => {
                 mt.i += 1;
+                const field_name = mt.tokSlice();
                 try mt.expect(.identifier);
 
-                node = try ZigTag.field_access.create(mt.t.arena, .{ .lhs = node, .field_name = mt.tokSlice() });
+                node = try ZigTag.field_access.create(mt.t.arena, .{ .lhs = node, .field_name = field_name });
             },
             .arrow => {
                 mt.i += 1;
+                const field_name = mt.tokSlice();
                 try mt.expect(.identifier);
 
                 const deref = try ZigTag.deref.create(mt.t.arena, node);
-                node = try ZigTag.field_access.create(mt.t.arena, .{ .lhs = deref, .field_name = mt.tokSlice() });
+                node = try ZigTag.field_access.create(mt.t.arena, .{ .lhs = deref, .field_name = field_name });
             },
             .l_bracket => {
                 mt.i += 1;
@@ -1148,6 +1163,8 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
                 }
             },
             .l_brace => {
+                mt.i += 1;
+
                 // Check for designated field initializers
                 if (mt.peek() == .period) {
                     var init_vals = std.ArrayList(ast.Payload.ContainerInitDot.Initializer).init(mt.t.gpa);
@@ -1155,8 +1172,8 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
 
                     while (true) {
                         try mt.expect(.period);
-                        try mt.expect(.identifier);
                         const name = mt.tokSlice();
+                        try mt.expect(.identifier);
                         try mt.expect(.equal);
 
                         const val = try mt.parseCCondExpr(scope);
@@ -1167,7 +1184,7 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
                             .comma => {
                                 mt.i += 1;
                             },
-                            .r_paren => {
+                            .r_brace => {
                                 mt.i += 1;
                                 break;
                             },
@@ -1194,7 +1211,7 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
                         .comma => {
                             mt.i += 1;
                         },
-                        .r_paren => {
+                        .r_brace => {
                             mt.i += 1;
                             break;
                         },

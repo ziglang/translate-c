@@ -2,7 +2,6 @@
 #define bar /* bar */ 2
 
 // translate
-// expect=fail
 //
 // pub const foo = @as(c_int, 1);
 //

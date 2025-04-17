@@ -4,7 +4,6 @@
 #define WORLD 00000123
 
 // translate
-// expect=fail
 //
 // pub const O_RDONLY = @as(c_int, 0o0);
 // pub const HELLO = @as(c_int, 0o00);

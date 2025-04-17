@@ -3,7 +3,6 @@ int BAR = 0;
 BAR
 
 // translate
-// expect=fail
 //
 // pub inline fn FOO() @TypeOf(-BAR) {
 //     return -BAR;

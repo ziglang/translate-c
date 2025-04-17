@@ -3,7 +3,6 @@
 #define FOO_CHAR '\077'
 
 // translate
-// expect=fail
 //
 // pub const FOO = "aoeu\x13 derp";
 //

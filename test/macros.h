@@ -42,7 +42,7 @@ union U {
 #define NESTED_COMMA_OPERATOR (1, (2, 3))
 #define NESTED_COMMA_OPERATOR_LHS (1, 2), 3
 
-// #include <stdint.h>
+#include <stdint.h>
 #if !defined(__UINTPTR_MAX__)
 typedef _Bool uintptr_t;
 #endif

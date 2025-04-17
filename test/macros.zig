@@ -8,8 +8,6 @@ const macros = @import("macros.h");
 const latin1 = @import("macros_not_utf8.h");
 
 test "casting to void with a macro" {
-    if (true) return error.SkipZigTest;
-
     macros.IGNORE_ME_1(42);
     macros.IGNORE_ME_2(42);
     macros.IGNORE_ME_3(42);
@@ -23,8 +21,6 @@ test "casting to void with a macro" {
 }
 
 test "initializer list expression" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(macros.Color{
         .r = 200,
         .g = 200,
@@ -34,27 +30,19 @@ test "initializer list expression" {
 }
 
 test "sizeof in macros" {
-    if (true) return error.SkipZigTest;
-
     try expect(@as(c_int, @sizeOf(u32)) == macros.MY_SIZEOF(u32));
     try expect(@as(c_int, @sizeOf(u32)) == macros.MY_SIZEOF2(u32));
 }
 
 test "reference to a struct type" {
-    if (true) return error.SkipZigTest;
-
     try expect(@sizeOf(macros.struct_Foo) == macros.SIZE_OF_FOO);
 }
 
 test "cast negative integer to pointer" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))))), macros.MAP_FAILED);
 }
 
 test "casting to union with a macro" {
-    if (true) return error.SkipZigTest;
-
     const l: c_long = 42;
     const d: f64 = 2.0;
 
@@ -66,8 +54,6 @@ test "casting to union with a macro" {
 }
 
 test "casting or calling a value with a paren-surrounded macro" {
-    if (true) return error.SkipZigTest;
-
     const l: c_long = 42;
     const casted = macros.CAST_OR_CALL_WITH_PARENS(c_int, l);
     try expect(casted == @as(c_int, @intCast(l)));
@@ -82,15 +68,11 @@ test "casting or calling a value with a paren-surrounded macro" {
 }
 
 test "nested comma operator" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(c_int, 3), macros.NESTED_COMMA_OPERATOR);
     try expectEqual(@as(c_int, 3), macros.NESTED_COMMA_OPERATOR_LHS);
 }
 
 test "cast functions" {
-    if (true) return error.SkipZigTest;
-
     const S = struct {
         fn foo() void {}
     };
@@ -99,27 +81,19 @@ test "cast functions" {
 }
 
 test "large integer macro" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(c_ulonglong, 18446744073709550592), macros.LARGE_INT);
 }
 
 test "string literal macro with embedded tab character" {
-    if (true) return error.SkipZigTest;
-
     try expectEqualStrings("hello\t", macros.EMBEDDED_TAB);
 }
 
 test "string and char literals that are not UTF-8 encoded" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(u8, '\xA9'), latin1.UNPRINTABLE_CHAR);
     try expectEqualStrings("\xA9\xA9\xA9", latin1.UNPRINTABLE_STRING);
 }
 
 test "Macro that uses division operator" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(c_int, 42), macros.DIVIDE_CONSTANT(@as(c_int, 42_000)));
     try expectEqual(@as(c_uint, 42), macros.DIVIDE_CONSTANT(@as(c_uint, 42_000)));
 
@@ -157,8 +131,6 @@ test "Macro that uses division operator" {
 }
 
 test "Macro that uses remainder operator" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(@as(c_int, 2_010), macros.REMAINDER_CONSTANT(@as(c_int, 42_010)));
     try expectEqual(@as(c_uint, 2_030), macros.REMAINDER_CONSTANT(@as(c_uint, 42_030)));
 
@@ -192,15 +164,11 @@ test "@typeInfo on translate-c result" {
 }
 
 test "Macro that uses Long type concatenation casting" {
-    if (true) return error.SkipZigTest;
-
     try expect((@TypeOf(macros.X)) == c_long);
     try expectEqual(macros.X, @as(c_long, 10));
 }
 
 test "Blank macros" {
-    if (true) return error.SkipZigTest;
-
     try expectEqual(macros.BLANK_MACRO, "");
     try expectEqual(macros.BLANK_CHILD_MACRO, "");
     try expect(@TypeOf(macros.BLANK_MACRO_CAST) == macros.def_type);

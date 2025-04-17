@@ -2,7 +2,6 @@
 int bar(void) { return 0; }
 
 // translate
-// expect=fail
 //
 // pub inline fn CALL(arg: anytype) @TypeOf(bar()) {
 //     _ = &arg;
