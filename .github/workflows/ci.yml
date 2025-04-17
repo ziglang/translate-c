@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - tmp
   pull_request:
     paths:
     - '**.zig'
@@ -37,4 +38,4 @@ jobs:
         run: zig build --release=safe
 
       - name: Run Tests
-        run: zig build test-fmt test-unit test-macros test-translate
+        run: zig build test

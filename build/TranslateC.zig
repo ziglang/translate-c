@@ -190,6 +190,19 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     try argv_list.append("-o");
     try argv_list.append(out_path);
 
+    const libc = try std.zig.LibCInstallation.findNative(.{
+        .target = translate_c.target,
+        .allocator = b.allocator,
+    });
+    if (libc.include_dir) |path| {
+        try argv_list.append("-I");
+        try argv_list.append(path);
+    }
+    if (libc.sys_include_dir) |path| {
+        try argv_list.append("-isystem");
+        try argv_list.append(path);
+    }
+
     var child = std.process.Child.init(argv_list.items, b.allocator);
     child.cwd = b.build_root.path;
     child.cwd_dir = b.build_root.handle;
