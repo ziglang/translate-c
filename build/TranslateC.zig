@@ -27,7 +27,7 @@ pub const Options = struct {
     translate_c_exe: ?*std.Build.Step.Compile = null,
     builtins_module: ?*std.Build.Module = null,
     helpers_module: ?*std.Build.Module = null,
-    translate_c_dep_name: []const u8 = "translate-c",
+    translate_c_dep_name: []const u8 = "translate_c",
     translate_c_optimize: std.builtin.OptimizeMode = .ReleaseFast,
 };
 
@@ -37,7 +37,7 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
     }).artifact("translate-c");
     const builtins_module = options.builtins_module orelse owner.dependency(options.translate_c_dep_name, .{
         .optimize = options.translate_c_optimize,
-    }).module("builtins");
+    }).module("c_builtins");
     const helpers_module = options.helpers_module orelse owner.dependency(options.translate_c_dep_name, .{
         .optimize = options.translate_c_optimize,
     }).module("helpers");

@@ -66,6 +66,8 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void
     var macro_buf = std.ArrayList(u8).init(gpa);
     defer macro_buf.deinit();
 
+    try macro_buf.appendSlice("#define __TRANSLATE_C__ 1\n");
+
     // TODO override --help and --version
     assert(!try d.parseArgs(std.io.null_writer, macro_buf.writer(), args));
 

@@ -12,6 +12,13 @@
             .url = "git+https://github.com/Vexu/arocc#3daec2b3950ab8aee5b3a8ae3e9cc11fb437e803",
             .hash = "aro-0.0.0-JSD1QkIZJgDmOZ70WVhJvlnU4fV1zEjP6Hm8eF-y6Dtd",
         },
+
+        // .example_compile_c = .{
+        //     .path = "examples/compile_c",
+        // },
+        // .example_import_header = .{
+        //     .path = "examples/import_header",
+        // },
     },
 
     .paths = .{

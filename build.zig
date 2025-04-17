@@ -183,6 +183,18 @@ pub fn build(b: *std.Build) !void {
         test_step.dependOn(macro_test_step);
     }
 
+    {
+        const example_test_step = b.step("test-examples", "Test examples");
+
+        // const compile_c = b.dependency("examples_compile_c", .{});
+        // example_test_step.dependOn(compile_c.builder.default_step);
+
+        // const import_header = b.dependency("examples_import_header", .{});
+        // example_test_step.dependOn(import_header.builder.default_step);
+
+        test_step.dependOn(example_test_step);
+    }
+
     try @import("test/cases.zig").addCaseTests(
         b,
         test_step,
