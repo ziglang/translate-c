@@ -3143,11 +3143,8 @@ fn transMacros(t: *Translator) !void {
     var pattern_list = try PatternList.init(t.gpa);
     defer pattern_list.deinit(t.gpa);
 
-    var it = t.pp.defines.iterator();
-    while (it.next()) |define_kv| {
-        const name = define_kv.key_ptr.*;
-        const macro = define_kv.value_ptr.*;
-
+    for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
+        if (macro.is_builtin) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
