@@ -42,9 +42,9 @@ union U {
 #define NESTED_COMMA_OPERATOR (1, (2, 3))
 #define NESTED_COMMA_OPERATOR_LHS (1, 2), 3
 
-// TODO same issue as with the run tests
+// TODO https://github.com/Vexu/arocc/issues/848
 // #include <stdint.h>
-typedef unsigned long long uintptr_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
 #if !defined(__UINTPTR_MAX__)
 typedef _Bool uintptr_t;
 #endif

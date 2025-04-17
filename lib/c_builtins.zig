@@ -1,6 +1,8 @@
+const std = @import("std");
+
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn abs(val: c_int) c_int {
-    return if (val == @import("std").math.minInt(c_int)) val else @intCast(@abs(val));
+    return if (val == std.math.minInt(c_int)) val else @intCast(@abs(val));
 }
 
 pub inline fn assume(cond: bool) void {
@@ -92,35 +94,35 @@ pub inline fn has_builtin(func: anytype) c_int {
 }
 
 pub inline fn huge_valf() f32 {
-    return @import("std").math.inf(f32);
+    return std.math.inf(f32);
 }
 
 pub inline fn inff() f32 {
-    return @import("std").math.inf(f32);
+    return std.math.inf(f32);
 }
 
 /// Similar to isinf, except the return value is -1 for an argument of -Inf and 1 for an argument of +Inf.
 pub inline fn isinf_sign(x: anytype) c_int {
-    if (!@import("std").math.isInf(x)) return 0;
-    return if (@import("std").math.isPositiveInf(x)) 1 else -1;
+    if (!std.math.isInf(x)) return 0;
+    return if (std.math.isPositiveInf(x)) 1 else -1;
 }
 
 pub inline fn isinf(x: anytype) c_int {
-    return @intFromBool(@import("std").math.isInf(x));
+    return @intFromBool(std.math.isInf(x));
 }
 
 pub inline fn isnan(x: anytype) c_int {
-    return @intFromBool(@import("std").math.isNan(x));
+    return @intFromBool(std.math.isNan(x));
 }
 
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn labs(val: c_long) c_long {
-    return if (val == @import("std").math.minInt(c_long)) val else @intCast(@abs(val));
+    return if (val == std.math.minInt(c_long)) val else @intCast(@abs(val));
 }
 
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn llabs(val: c_longlong) c_longlong {
-    return if (val == @import("std").math.minInt(c_longlong)) val else @intCast(@abs(val));
+    return if (val == std.math.minInt(c_longlong)) val else @intCast(@abs(val));
 }
 
 pub inline fn log10f(val: f32) f32 {
@@ -213,9 +215,9 @@ pub fn mul_overflow(a: anytype, b: anytype, result: *@TypeOf(a, b)) c_int {
 /// If tagp contains any non-numeric characters, the function returns a NaN whose significand is zero.
 /// If tagp is empty, the function returns a NaN whose significand is zero.
 pub inline fn nanf(tagp: []const u8) f32 {
-    const parsed = @import("std").fmt.parseUnsigned(c_ulong, tagp, 0) catch 0;
+    const parsed = std.fmt.parseUnsigned(c_ulong, tagp, 0) catch 0;
     const bits: u23 = @truncate(parsed); // single-precision float trailing significand is 23 bits
-    return @bitCast(@as(u32, bits) | @as(u32, @bitCast(@import("std").math.nan(f32))));
+    return @bitCast(@as(u32, bits) | @as(u32, @bitCast(std.math.nan(f32))));
 }
 
 pub inline fn object_size(ptr: ?*const anyopaque, ty: c_int) usize {
@@ -244,11 +246,11 @@ pub inline fn round(val: f64) f64 {
 }
 
 pub inline fn signbitf(val: f32) c_int {
-    return @intFromBool(@import("std").math.signbit(val));
+    return @intFromBool(std.math.signbit(val));
 }
 
 pub inline fn signbit(val: f64) c_int {
-    return @intFromBool(@import("std").math.signbit(val));
+    return @intFromBool(std.math.signbit(val));
 }
 
 pub inline fn sinf(val: f32) f32 {
@@ -268,7 +270,7 @@ pub inline fn sqrt(val: f64) f64 {
 }
 
 pub inline fn strcmp(s1: [*c]const u8, s2: [*c]const u8) c_int {
-    return switch (@import("std").mem.orderZ(u8, s1, s2)) {
+    return switch (std.mem.orderZ(u8, s1, s2)) {
         .lt => -1,
         .eq => 0,
         .gt => 1,
@@ -276,7 +278,7 @@ pub inline fn strcmp(s1: [*c]const u8, s2: [*c]const u8) c_int {
 }
 
 pub inline fn strlen(s: [*c]const u8) usize {
-    return @import("std").mem.sliceTo(s, 0).len;
+    return std.mem.sliceTo(s, 0).len;
 }
 
 pub inline fn truncf(val: f32) f32 {

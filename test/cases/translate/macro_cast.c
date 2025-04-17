@@ -1,4 +1,7 @@
-#include <stdint.h>
+// TODO https://github.com/Vexu/arocc/issues/848
+// #include <stdint.h>
+typedef __UINT32_TYPE__ uint32_t;
+
 int baz(void *arg) { return 0; }
 #define FOO(bar) baz((void *)(baz))
 #define BAR (void*) a
