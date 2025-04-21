@@ -173,6 +173,10 @@ pub fn translate(
 
     try translator.prepopulateGlobalNameTable();
     try translator.transTopLevelDecls();
+
+    // Insert empty line before macros.
+    try translator.global_scope.nodes.append(gpa, try ZigTag.warning.create(arena, "\n"));
+
     try translator.transMacros();
 
     for (translator.alias_list.items) |alias| {
@@ -592,9 +596,16 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         .is_export = !is_export_or_inline and has_body and !is_always_inline,
         .is_pub = is_pub,
         .cc = if (raw_qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
-            .C => .c,
+            .c => .c,
             .stdcall => .x86_stdcall,
             .thiscall => .x86_thiscall,
+            .fastcall => .x86_fastcall,
+            .regcall => .x86_regcall,
+            .riscv_vector => .riscv_vector,
+            .aarch64_sve_pcs => .aarch64_sve_pcs,
+            .aarch64_vector_pcs => .aarch64_vfabi,
+            .arm_aapcs => .arm_aapcs,
+            .arm_aapcs_vfp => .arm_aapcs_vfp,
             .vectorcall => switch (t.comp.target.cpu.arch) {
                 .x86 => .x86_vectorcall,
                 .aarch64, .aarch64_be => .aarch64_vfabi,

@@ -5,7 +5,6 @@ void __attribute__((cdecl)) foo4(float *a);
 void __attribute__((thiscall)) foo5(float *a);
 
 // translate
-// expect=fail
 // target=x86-linux-none
 //
 // pub extern fn foo1(a: [*c]f32) callconv(.{ .x86_fastcall = .{} }) void;

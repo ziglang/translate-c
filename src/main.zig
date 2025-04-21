@@ -22,7 +22,15 @@ pub fn main() u8 {
         return 1;
     };
 
-    var comp = aro.Compilation.initDefault(gpa, std.fs.cwd()) catch |err| switch (err) {
+    const stderr = std.io.getStdErr();
+    var diagnostics: aro.Diagnostics = .{
+        .output = .{ .to_file = .{
+            .file = stderr,
+            .config = std.io.tty.detectConfig(stderr),
+        } },
+    };
+
+    var comp = aro.Compilation.initDefault(gpa, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -38,7 +46,7 @@ pub fn main() u8 {
     };
     defer gpa.free(exe_name);
 
-    var driver: aro.Driver = .{ .comp = &comp, .aro_name = exe_name };
+    var driver: aro.Driver = .{ .comp = &comp, .diagnostics = &diagnostics, .aro_name = exe_name };
     defer driver.deinit();
 
     var toolchain: aro.Toolchain = .{ .driver = &driver, .arena = arena, .filesystem = .{ .real = comp.cwd } };
@@ -51,7 +59,6 @@ pub fn main() u8 {
             return 1;
         },
         error.FatalError => {
-            _ = renderErrors(&driver);
             if (fast_exit) process.exit(1);
             return 1;
         },
@@ -102,9 +109,9 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void
     var c_tree = try pp.parse();
     defer c_tree.deinit();
 
-    if (renderErrors(d) != 0) {
+    if (d.diagnostics.errors != 0) {
         if (fast_exit) process.exit(1);
-        return;
+        return error.FatalError;
     }
 
     const rendered_zig = try Translator.translate(gpa, d.comp, &pp, &c_tree);
@@ -127,39 +134,6 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void
         return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
 
     if (fast_exit) process.exit(0);
-}
-
-/// Renders errors and fatal errors + associated notes (e.g. "expanded from here"); does not render warnings or associated notes
-fn renderErrors(d: *aro.Driver) u32 {
-    var writer = aro.Diagnostics.defaultMsgWriter(d.detectConfig(std.io.getStdErr()));
-    defer writer.deinit();
-
-    var errors: u32 = 0;
-    var saw_error = false;
-    for (d.comp.diagnostics.list.items) |msg| {
-        switch (msg.kind) {
-            .@"error", .@"fatal error" => {
-                errors += 1;
-                saw_error = true;
-                aro.Diagnostics.renderMessage(d.comp, &writer, msg);
-            },
-            .warning => saw_error = false,
-            .note => {
-                if (saw_error) {
-                    aro.Diagnostics.renderMessage(d.comp, &writer, msg);
-                }
-            },
-            .off => {},
-            .default => unreachable,
-        }
-    }
-    const e_s = if (errors == 1) "" else "s";
-    if (errors != 0) {
-        writer.print("{d} error{s} generated.\n", .{ errors, e_s });
-    }
-
-    d.comp.diagnostics.list.items.len = 0;
-    return errors;
 }
 
 comptime {

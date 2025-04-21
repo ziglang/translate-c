@@ -12,13 +12,12 @@ extern union OpenGLProcs glProcs;
 #define glClearPFN PFNGLCLEARPROC
 
 // translate
-// expect=fail
 //
 // pub const GLbitfield = c_uint;
-// pub const PFNGLCLEARPROC = ?*const fn (GLbitfield) callconv(.c) void;
+// pub const PFNGLCLEARPROC = ?*const fn (mask: GLbitfield) callconv(.c) void;
 // pub const OpenGLProc = ?*const fn () callconv(.c) void;
 // const struct_unnamed_1 = extern struct {
-//     Clear: PFNGLCLEARPROC = @import("std").mem.zeroes(PFNGLCLEARPROC),
+//     Clear: PFNGLCLEARPROC = null,
 // };
 // pub const union_OpenGLProcs = extern union {
 //     ptr: [1]OpenGLProc,
@@ -28,8 +27,8 @@ extern union OpenGLProcs glProcs;
 //
 // pub const glClearPFN = PFNGLCLEARPROC;
 //
-// pub inline fn glClearUnion(arg_2: GLbitfield) void {
-//     return glProcs.gl.Clear.?(arg_2);
+// pub inline fn glClearUnion(mask: GLbitfield) void {
+//     return glProcs.gl.Clear.?(mask);
 // }
 //
 // pub const OpenGLProcs = union_OpenGLProcs;

@@ -611,10 +611,13 @@ pub const Payload = struct {
             x86_fastcall,
             x86_thiscall,
             x86_vectorcall,
+            x86_regcall,
             aarch64_vfabi,
+            aarch64_sve_pcs,
             arm_aapcs,
             arm_aapcs_vfp,
             m68k_rtd,
+            riscv_vector,
         };
     };
 
@@ -2867,10 +2870,13 @@ fn renderFunc(c: *Context, node: Node) !NodeIndex {
             .x86_fastcall,
             .x86_thiscall,
             .x86_vectorcall,
+            .x86_regcall,
             .aarch64_vfabi,
+            .aarch64_sve_pcs,
             .arm_aapcs,
             .arm_aapcs_vfp,
             .m68k_rtd,
+            .riscv_vector,
             => cc_node: {
                 // .{ .foo = .{} }
                 _ = try c.addToken(.period, ".");
