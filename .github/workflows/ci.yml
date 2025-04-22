@@ -37,4 +37,9 @@ jobs:
         run: zig build --release=safe
 
       - name: Run Tests
+        run: zig build test
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Run Tests
         run: zig build test-fmt test-unit test-macros test-translate
+        if: matrix.os != 'ubuntu-latest'
