@@ -1,7 +1,4 @@
-// TODO https://github.com/Vexu/arocc/issues/848
-// #include <stdint.h>
-typedef __UINT32_TYPE__ uint32_t;
-
+#include <stdint.h>
 int log2(uint32_t a) {
     int i = 0;
     while (a > 0) {

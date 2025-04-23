@@ -229,6 +229,32 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         });
     };
 
+    // Aro's non-linux toolchains are not mature enough to find the necessary directories.
+    if (translate_c.target.result.os.tag != .linux) {
+        if (translate_c.target.result.isMinGW()) {
+            const libc = try std.zig.LibCDirs.detectFromBuilding(b.allocator, b.graph.zig_lib_directory.path.?, translate_c.target.result);
+            for (libc.libc_include_dir_list) |path| {
+                try argv_list.append("-isystem");
+                try argv_list.append(path);
+            }
+            try argv_list.append("-isystem");
+            try argv_list.append(try std.fs.path.join(b.allocator, &.{ b.graph.zig_lib_directory.path.?, "include" })); // for mm_malloc.h
+        } else {
+            const libc = try std.zig.LibCInstallation.findNative(.{
+                .target = translate_c.target.result,
+                .allocator = b.allocator,
+            });
+            if (libc.include_dir) |path| {
+                try argv_list.append("-I");
+                try argv_list.append(path);
+            }
+            if (libc.sys_include_dir) |path| {
+                try argv_list.append("-isystem");
+                try argv_list.append(path);
+            }
+        }
+    }
+
     for (translate_c.include_dirs.items) |include_dir| {
         try include_dir.appendZigProcessFlags(b, &argv_list, step);
     }
