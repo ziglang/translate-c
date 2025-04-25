@@ -260,8 +260,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         },
         .Signal, .Stopped, .Unknown => {
             return step.fail(
-                "command to translate {s} failed unexpectedly",
-                .{resolved_source_path},
+                "command to translate {s} failed unexpectedly:{s}\n",
+                .{ resolved_source_path, stderr },
             );
         },
     }
