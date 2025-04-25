@@ -2231,7 +2231,7 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
 
     const tmp = try block_scope.reserveMangledName("tmp");
 
-    var rhs = try t.transExprCoercing(&block_scope.base, bin.rhs, .used);
+    var rhs = try t.transExpr(&block_scope.base, bin.rhs, .used);
     const lhs_qt = bin.lhs.qt(t.tree);
     if (rhs.isBoolRes() and !lhs_qt.is(t.comp, .bool)) {
         rhs = try ZigTag.int_from_bool.create(t.arena, rhs);
