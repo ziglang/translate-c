@@ -22,7 +22,12 @@ pub fn addCaseTests(
         test_run_translated_step.dependOn(&exe.step);
     }
 
-    var dir = try b.build_root.handle.openDir("test/cases", .{ .iterate = true });
+    var dir = b.build_root.handle.openDir("test/cases", .{ .iterate = true }) catch |err| {
+        const fail_step = b.addFail(b.fmt("unable to open test/cases: {s}\n", .{@errorName(err)}));
+        test_translate_step.dependOn(&fail_step.step);
+        test_run_translated_step.dependOn(&fail_step.step);
+        return;
+    };
     defer dir.close();
 
     var it = try dir.walk(b.allocator);
