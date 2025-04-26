@@ -534,6 +534,25 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
+        // TODO check for flexible array.
+        if (record_ty.fields.len == 0 and
+            t.comp.target.os.tag == .windows and t.comp.target.abi == .msvc)
+        {
+            // In MSVC empty records have the same size as their alignment.
+            const padding_bits = record_ty.layout.?.size_bits;
+            const alignment_bits = record_ty.layout.?.field_alignment_bits;
+
+            try fields.append(.{
+                .name = "_padding",
+                .type = try ZigTag.type.create(t.arena, try std.fmt.allocPrint(t.arena, "u{d}", .{padding_bits})),
+                .alignment = @divExact(alignment_bits, 8),
+                .default_value = if (container_kind == .@"struct")
+                    ZigTag.zero_literal.init()
+                else
+                    null,
+            });
+        }
+
         const record_payload = try t.arena.create(ast.Payload.Record);
         record_payload.* = .{
             .base = .{ .tag = container_kind },
