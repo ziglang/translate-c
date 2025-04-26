@@ -41,6 +41,7 @@ pub fn addCaseTests(
 
         for (translate_exes) |exe| switch (case.kind) {
             .translate => |output| {
+                test_translate_step.test_results.test_count += 1;
                 const annotated_case_name = b.fmt("translate {s}", .{case.name});
 
                 const write_src = b.addWriteFiles();
@@ -61,6 +62,12 @@ pub fn addCaseTests(
                 test_translate_step.dependOn(&check_file.step);
             },
             .run => |output| {
+                test_run_translated_step.test_results.test_count += 1;
+                if (case.skip_windows and target.result.os.tag == .windows) {
+                    test_run_translated_step.test_results.skip_count += 1;
+                    continue;
+                }
+
                 const annotated_case_name = b.fmt("run-translated {s}", .{case.name});
 
                 const write_src = b.addWriteFiles();
@@ -96,6 +103,7 @@ const Case = struct {
     input: []const u8,
     expect: Expect,
     kind: Kind,
+    skip_windows: bool,
 
     const Expect = enum { pass, fail };
 
@@ -130,6 +138,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
 
     var target = default_target;
     var expect: Case.Expect = .pass;
+    var skip_windows = true;
 
     var it = std.mem.tokenizeScalar(u8, manifest, '\n');
 
@@ -154,6 +163,8 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
             target = try std.Target.Query.parse(.{ .arch_os_abi = value });
         } else if (std.mem.eql(u8, key, "expect")) {
             expect = std.meta.stringToEnum(Case.Expect, value) orelse return error.InvalidExpectValue;
+        } else if (std.mem.eql(u8, key, "skip_windows")) {
+            skip_windows = std.mem.eql(u8, value, "true");
         } else return error.InvalidTestConfigOption;
     }
 
@@ -166,6 +177,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
             .run => .{ .run = try trailing(b.allocator, &it) },
             .translate => .{ .translate = try trailingSplit(b.allocator, &it) },
         },
+        .skip_windows = skip_windows,
     };
 }
 
