@@ -1907,8 +1907,9 @@ fn transCastExpr(
             if (cast.implicit) {
                 if (t.tree.value_map.get(cast.operand)) |val| {
                     const max_int = try aro.Value.maxInt(cast.qt, t.comp);
+                    const min_int = try aro.Value.minInt(cast.qt, t.comp);
 
-                    if (val.compare(.lte, max_int, t.comp)) {
+                    if (val.compare(.lte, max_int, t.comp) and val.compare(.gte, min_int, t.comp)) {
                         break :int_cast try t.transExprCoercing(scope, cast.operand, .used);
                     }
                 }
