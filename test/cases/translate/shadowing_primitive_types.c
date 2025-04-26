@@ -13,4 +13,3 @@ typedef enum {
 //
 // pub const @"f32": c_int = 0;
 // pub const @"u32": c_int = 1;
-// pub const BadEnum = c_uint;

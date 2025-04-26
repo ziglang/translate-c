@@ -7,6 +7,7 @@ typedef struct {
 } Bar;
 
 // translate
+// target=native-linux
 //
 // pub const FooA: c_int = 0;
 // pub const FooB: c_int = 1;
