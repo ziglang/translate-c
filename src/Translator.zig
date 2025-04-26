@@ -196,6 +196,8 @@ pub fn translate(
         \\
     );
 
+    try Scope.processContainerMemberFnsList(&translator, translator.global_scope.container_member_fns_list);
+
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
         gpa.free(zig_ast.source);
@@ -563,6 +565,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         // mangled name is of no real use here.
         if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
+        try t.global_scope.addContainerDecl(node);
     } else {
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -681,6 +684,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         },
     };
 
+    try t.global_scope.addMemberFunction(proto_payload);
     proto_payload.data.body = try block_scope.complete();
     return t.addTopLevelDecl(fn_name, proto_node);
 }
