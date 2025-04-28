@@ -196,7 +196,7 @@ pub fn translate(
         \\
     );
 
-    try Scope.processContainerMemberFnsList(&translator, translator.global_scope.container_member_fns_list);
+    try Scope.processContainerMemberFnsMap(&translator, translator.global_scope.container_member_fns_map);
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
@@ -565,7 +565,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         // mangled name is of no real use here.
         if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
-        try t.global_scope.addContainerDecl(node);
+        try t.global_scope.addContainerDecl(record_qt, node);
     } else {
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -624,6 +624,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         error.OutOfMemory => |e| return e,
     };
 
+    const proto_payload = proto_node.castTag(.func).?;
     if (!has_body) {
         if (scope.id != .root) {
             const bs: *Scope.Block = try scope.findBlockScope(t);
@@ -633,9 +634,9 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
             try bs.discardVariable(mangled_name);
             return;
         }
+        try t.global_scope.addMemberFunction(func_ty, proto_payload);
         return t.addTopLevelDecl(fn_name, proto_node);
     }
-    const proto_payload = proto_node.castTag(.func).?;
 
     // actual function definition with body
     const body_stmt = body_node.?.get(t.tree).compound_stmt;
@@ -684,7 +685,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         },
     };
 
-    try t.global_scope.addMemberFunction(proto_payload);
+    try t.global_scope.addMemberFunction(func_ty, proto_payload);
     proto_payload.data.body = try block_scope.complete();
     return t.addTopLevelDecl(fn_name, proto_node);
 }

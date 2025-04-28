@@ -1,5 +1,6 @@
 typedef struct {
     int foo;
+    char* bar;
 } Foo;
 
 int Foo_bar(Foo foo);
@@ -21,10 +22,11 @@ int libsomething_union_quux(UFoo *ufoo);
 //
 // pub const Foo = extern struct {
 //     foo: c_int = 0,
-//     pub const bar = Foo_bar;
+//     bar: [*c]u8 = null,
+//     pub const bar1 = Foo_bar;
 //     pub const quux = libsomething_quux;
-//     pub const bar1 = foo1_bar;
-//     pub const bar2 = foo2_bar;
+//     pub const bar2 = foo1_bar;
+//     pub const bar3 = foo2_bar;
 // };
 // pub extern fn Foo_bar(foo: Foo) c_int;
 // pub extern fn baz(foo: [*c]Foo) c_int;
