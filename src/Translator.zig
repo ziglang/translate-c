@@ -565,7 +565,9 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         // mangled name is of no real use here.
         if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
-        try t.global_scope.addContainerDecl(record_qt, node);
+        try t.global_scope.container_member_fns_map.put(t.gpa, record_qt, .{
+            .container_decl = init_node,
+        });
     } else {
         try scope.appendNode(node);
         try bs.discardVariable(name);

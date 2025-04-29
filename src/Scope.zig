@@ -16,9 +16,9 @@ pub const AliasList = std.ArrayListUnmanaged(struct {
 // Associates a container (structure or union) with its relevant member functions.
 pub const ContainerMemberFns = struct {
     container_decl: ast.Node,
-    member_fns: std.ArrayListUnmanaged(*ast.Payload.Func),
+    member_fns: std.ArrayListUnmanaged(*ast.Payload.Func) = .empty,
 };
-pub const ContainerMemberFnsHashMap = std.AutoHashMapUnmanaged(aro.QualType, ContainerMemberFns);
+pub const ContainerMemberFnsHashMap = std.AutoArrayHashMapUnmanaged(aro.QualType, ContainerMemberFns);
 
 id: Id,
 parent: ?*Scope,
@@ -234,34 +234,15 @@ pub const Root = struct {
         return root.containsNow(name) or root.translator.global_names.contains(name) or root.translator.weak_global_names.contains(name);
     }
 
-    pub fn addContainerDecl(root: *Root, container_qt: aro.QualType, decl_node: ast.Node) !void {
-        const tag = decl_node.tag();
-        std.debug.assert(tag == .var_simple or tag == .pub_var_simple);
-        const container_decl = switch (tag) {
-            inline .var_simple, .pub_var_simple => |t| decl_node.castTag(t).?.data.init,
-            else => unreachable,
-        };
-
-        const member_fns = std.ArrayListUnmanaged(*ast.Payload.Func).empty;
-        const container_member_fns = ContainerMemberFns{
-            .container_decl = container_decl,
-            .member_fns = member_fns,
-        };
-        try root.container_member_fns_map.put(root.translator.gpa, container_qt, container_member_fns);
-    }
-
     pub fn addMemberFunction(root: *Root, func_ty: aro.Type.Func, func: *ast.Payload.Func) !void {
-        if (func.data.name == null) return;
+        std.debug.assert(func.data.name != null);
         if (func_ty.params.len == 0) return;
-        const param1_info = func_ty.params[0];
-        const param1_qt = param1_info.qt;
 
-        const container_qt = loop: switch (param1_qt.type(root.translator.comp)) {
-            .pointer => |pointer| continue :loop pointer.child.type(root.translator.comp),
-            .typedef => |typedef| typedef.base,
-            .typeof => |typeof| typeof.base,
-            else => param1_qt,
-        };
+        const param1_base = func_ty.params[0].qt.base(root.translator.comp);
+        const container_qt = if (param1_base.type == .pointer)
+            param1_base.type.pointer.child.base(root.translator.comp).qt
+        else
+            param1_base.qt;
 
         if (root.container_member_fns_map.getEntry(container_qt)) |*entry| {
             try entry.value_ptr.member_fns.append(root.translator.gpa, func);
@@ -340,15 +321,10 @@ pub fn processContainerMemberFnsMap(t: *Translator, map: ContainerMemberFnsHashM
             else
                 try std.fmt.allocPrint(t.arena, "{s}{d}", .{ last_name, same_count });
 
-            const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
-            payload.* = .{
-                .base = .{ .tag = .pub_var_simple },
-                .data = .{
-                    .name = @as([]const u8, @ptrCast(var_name)),
-                    .init = ast.Node.initPayload(&ident_payload.base),
-                },
-            };
-            func_ref_vars[count] = ast.Node.initPayload(&payload.base);
+            func_ref_vars[count] = try ast.Node.Tag.pub_var_simple.create(t.arena, .{
+                .name = @as([]const u8, @ptrCast(var_name)),
+                .init = ast.Node.initPayload(&ident_payload.base),
+            });
             count += 1;
         }
         container_data.variables = new_variables[0 .. old_variables.len + count];
