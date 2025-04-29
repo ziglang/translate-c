@@ -15,7 +15,7 @@ pub const AliasList = std.ArrayListUnmanaged(struct {
 
 // Associates a container (structure or union) with its relevant member functions.
 pub const ContainerMemberFns = struct {
-    container_decl: ast.Node,
+    container_decl_ptr: *ast.Node,
     member_fns: std.ArrayListUnmanaged(*ast.Payload.Func) = .empty,
 };
 pub const ContainerMemberFnsHashMap = std.AutoArrayHashMapUnmanaged(aro.QualType, ContainerMemberFns);
@@ -283,17 +283,28 @@ pub fn processContainerMemberFnsMap(t: *Translator, map: ContainerMemberFnsHashM
     var iter = map.iterator();
     while (iter.next()) |entry| {
         member_names.clearRetainingCapacity();
-        const container_data = switch (entry.value_ptr.container_decl.tag()) {
-            inline .@"struct", .@"union" => |tag| &entry.value_ptr.container_decl.castTag(tag).?.data,
+        const variables_ptr = switch (entry.value_ptr.container_decl_ptr.tag()) {
+            inline .@"struct", .@"union" => |tag| blk_record: {
+                const container_data = &entry.value_ptr.container_decl_ptr.castTag(tag).?.data;
+                // Avoid duplication with field names
+                for (container_data.fields) |field| {
+                    try member_names.put(t.gpa, field.name, 0);
+                }
+                break :blk_record &container_data.variables;
+            },
+            .opaque_literal => blk_opaque: {
+                const container_decl = try ast.Node.Tag.opaque_with_members.create(t.arena, .{
+                    .functions = try t.arena.alloc(ast.Node, 0),
+                    .variables = try t.arena.alloc(ast.Node, 0),
+                });
+                entry.value_ptr.container_decl_ptr.* = container_decl;
+                break :blk_opaque &container_decl.castTag(.opaque_with_members).?.data.variables;
+            },
             else => return,
         };
-        // Avoid duplication with field names
-        for (container_data.fields) |field| {
-            try member_names.put(t.gpa, field.name, 0);
-        }
 
         const arena = t.arena;
-        const old_variables = container_data.variables;
+        const old_variables = variables_ptr.*;
         var new_variables = try arena.alloc(ast.Node, old_variables.len + entry.value_ptr.member_fns.items.len);
         @memcpy(new_variables[0..old_variables.len], old_variables);
         // Assume the allocator of container_data.variables is arena,
@@ -327,7 +338,7 @@ pub fn processContainerMemberFnsMap(t: *Translator, map: ContainerMemberFnsHashM
             });
             count += 1;
         }
-        container_data.variables = new_variables[0 .. old_variables.len + count];
+        variables_ptr.* = new_variables[0 .. old_variables.len + count];
     }
 }
 

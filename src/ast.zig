@@ -67,6 +67,8 @@ pub const Node = extern union {
         tuple,
         container_init,
         container_init_dot,
+        /// opaque { members }
+        opaque_with_members,
         /// _ = operand;
         discard,
 
@@ -388,6 +390,7 @@ pub const Node = extern union {
                 .func => Payload.Func,
                 .@"struct", .@"union" => Payload.Record,
                 .tuple => Payload.TupleInit,
+                .opaque_with_members => Payload.Opaque,
                 .container_init => Payload.ContainerInit,
                 .container_init_dot => Payload.ContainerInitDot,
                 .block => Payload.Block,
@@ -642,6 +645,14 @@ pub const Payload = struct {
             alignment: ?c_uint,
             default_value: ?Node,
         };
+    };
+
+    pub const Opaque = struct {
+        base: Payload,
+        data: struct {
+            functions: []Node,
+            variables: []Node,
+        },
     };
 
     pub const TupleInit = struct {
@@ -1902,6 +1913,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 } },
             });
         },
+        .opaque_with_members => return renderOpaqueWithMembers(c, node),
         .array_access => {
             const payload = node.castTag(.array_access).?.data;
             const lhs = try renderNodeGrouped(c, payload.lhs);
@@ -2271,6 +2283,52 @@ fn renderRecord(c: *Context, node: Node) !NodeIndex {
     }
 }
 
+fn renderOpaqueWithMembers(c: *Context, node: Node) !NodeIndex {
+    const payload = node.castTag(.opaque_with_members).?.data;
+    const num_vars = payload.variables.len;
+    const num_funcs = payload.functions.len;
+    const total_members = num_vars + num_funcs;
+    const members = try c.gpa.alloc(NodeIndex, total_members);
+    defer c.gpa.free(members);
+
+    const opaque_tok = try c.addToken(.keyword_opaque, "opaque");
+    _ = try c.addToken(.l_brace, "{");
+
+    for (payload.variables, 0..) |variable, i| {
+        members[i] = try renderNode(c, variable);
+    }
+    for (payload.functions, 0..) |function, i| {
+        members[num_vars + i] = try renderNode(c, function);
+    }
+    _ = try c.addToken(.r_brace, "}");
+
+    if (total_members == 0) {
+        return c.addNode(.{
+            .tag = .container_decl_two,
+            .main_token = opaque_tok,
+            .data = .{ .opt_node_and_opt_node = .{
+                .none, .none,
+            } },
+        });
+    } else if (total_members <= 2) {
+        return c.addNode(.{
+            .tag = if (num_funcs == 0) .container_decl_two_trailing else .container_decl_two,
+            .main_token = opaque_tok,
+            .data = .{ .opt_node_and_opt_node = .{
+                if (members.len >= 1) members[0].toOptional() else .none,
+                if (members.len >= 2) members[1].toOptional() else .none,
+            } },
+        });
+    } else {
+        const span = try c.listToSpan(members);
+        return c.addNode(.{
+            .tag = if (num_funcs == 0) .container_decl_trailing else .container_decl,
+            .main_token = opaque_tok,
+            .data = .{ .extra_range = span },
+        });
+    }
+}
+
 fn renderFieldAccess(c: *Context, lhs: NodeIndex, field_name: []const u8) !NodeIndex {
     return c.addNode(.{
         .tag = .field_access,
@@ -2481,6 +2539,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         },
 
         .opaque_literal,
+        .opaque_with_members,
         .empty_array,
         .block_single,
         .add,

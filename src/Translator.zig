@@ -566,7 +566,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
         try t.global_scope.container_member_fns_map.put(t.gpa, record_qt, .{
-            .container_decl = init_node,
+            .container_decl_ptr = &payload.data.init,
         });
     } else {
         try scope.appendNode(node);

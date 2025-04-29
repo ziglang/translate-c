@@ -18,6 +18,12 @@ int UFoo_bar(UFoo ufoo);
 int ubaz(UFoo *ufoo);
 int libsomething_union_quux(UFoo *ufoo);
 
+typedef struct opa_foo OpaFoo;
+
+int opa_foo_init(OpaFoo *foo);
+int opa_foo1_bar(OpaFoo foo);
+int opa_foo2_bar(OpaFoo *foo);
+
 // translate
 //
 // pub const Foo = extern struct {
@@ -42,3 +48,12 @@ int libsomething_union_quux(UFoo *ufoo);
 // pub extern fn UFoo_bar(ufoo: UFoo) c_int;
 // pub extern fn ubaz(ufoo: [*c]UFoo) c_int;
 // pub extern fn libsomething_union_quux(ufoo: [*c]UFoo) c_int;
+// pub const struct_opa_foo = opaque {
+//     pub const init = opa_foo_init;
+//     pub const bar = opa_foo1_bar;
+//     pub const bar1 = opa_foo2_bar;
+// };
+// pub const OpaFoo = struct_opa_foo;
+// pub extern fn opa_foo_init(foo: ?*OpaFoo) c_int;
+// pub extern fn opa_foo1_bar(foo: OpaFoo) c_int;
+// pub extern fn opa_foo2_bar(foo: ?*OpaFoo) c_int;
