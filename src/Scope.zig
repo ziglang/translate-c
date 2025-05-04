@@ -216,9 +216,8 @@ pub const Root = struct {
         root.sym_table.deinit(root.translator.gpa);
         root.blank_macros.deinit(root.translator.gpa);
         root.nodes.deinit(root.translator.gpa);
-        var iter = root.container_member_fns_map.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.member_fns.deinit(root.translator.gpa);
+        for (root.container_member_fns_map.values()) |*members| {
+            members.member_fns.deinit(root.translator.gpa);
         }
         root.container_member_fns_map.deinit(root.translator.gpa);
     }
@@ -244,8 +243,8 @@ pub const Root = struct {
         else
             param1_base.qt;
 
-        if (root.container_member_fns_map.getEntry(container_qt)) |*entry| {
-            try entry.value_ptr.member_fns.append(root.translator.gpa, func);
+        if (root.container_member_fns_map.getPtr(container_qt)) |members| {
+            try members.member_fns.append(root.translator.gpa, func);
         }
     }
 };
@@ -280,44 +279,38 @@ pub fn findBlockReturnType(inner: *Scope) aro.QualType {
 pub fn processContainerMemberFnsMap(t: *Translator, map: ContainerMemberFnsHashMap) !void {
     var member_names: std.StringArrayHashMapUnmanaged(u32) = .empty;
     defer member_names.deinit(t.gpa);
-    var iter = map.iterator();
-    while (iter.next()) |entry| {
+    for (map.values()) |members| {
         member_names.clearRetainingCapacity();
-        const variables_ptr = switch (entry.value_ptr.container_decl_ptr.tag()) {
+        const decls_ptr = switch (members.container_decl_ptr.tag()) {
             inline .@"struct", .@"union" => |tag| blk_record: {
-                const container_data = &entry.value_ptr.container_decl_ptr.castTag(tag).?.data;
+                const container_data = &members.container_decl_ptr.castTag(tag).?.data;
                 // Avoid duplication with field names
                 for (container_data.fields) |field| {
                     try member_names.put(t.gpa, field.name, 0);
                 }
-                break :blk_record &container_data.variables;
+                break :blk_record &container_data.decls;
             },
             .opaque_literal => blk_opaque: {
-                const container_decl = try ast.Node.Tag.opaque_with_members.create(t.arena, .{
-                    .functions = try t.arena.alloc(ast.Node, 0),
-                    .variables = try t.arena.alloc(ast.Node, 0),
+                const container_decl = try ast.Node.Tag.@"opaque".create(t.arena, .{
+                    .layout = .none,
+                    .fields = &.{},
+                    .decls = &.{},
                 });
-                entry.value_ptr.container_decl_ptr.* = container_decl;
-                break :blk_opaque &container_decl.castTag(.opaque_with_members).?.data.variables;
+                members.container_decl_ptr.* = container_decl;
+                break :blk_opaque &container_decl.castTag(.@"opaque").?.data.decls;
             },
             else => return,
         };
 
-        const arena = t.arena;
-        const old_variables = variables_ptr.*;
-        var new_variables = try arena.alloc(ast.Node, old_variables.len + entry.value_ptr.member_fns.items.len);
-        @memcpy(new_variables[0..old_variables.len], old_variables);
-        // Assume the allocator of container_data.variables is arena,
+        const old_decls = decls_ptr.*;
+        const new_decls = try t.arena.alloc(ast.Node, old_decls.len + members.member_fns.items.len);
+        @memcpy(new_decls[0..old_decls.len], old_decls);
+        // Assume the allocator of container_data.decls is arena,
         // so don't add arena.free(old_variables).
-        var func_ref_vars = new_variables[old_variables.len..];
+        const func_ref_vars = new_decls[old_decls.len..];
         var count: u32 = 0;
-        for (entry.value_ptr.member_fns.items) |func| {
-            const func_name = func.data.name orelse continue;
-            const ident_payload = try t.arena.create(ast.Payload.Value);
-            ident_payload.* = .{
-                .base = .{ .tag = .identifier },
-                .data = func_name,
-            };
+        for (members.member_fns.items) |func| {
+            const func_name = func.data.name.?;
 
             const last_index = std.mem.lastIndexOf(u8, func_name, "_");
             const last_name = if (last_index) |index| func_name[index + 1 ..] else continue;
@@ -333,12 +326,12 @@ pub fn processContainerMemberFnsMap(t: *Translator, map: ContainerMemberFnsHashM
                 try std.fmt.allocPrint(t.arena, "{s}{d}", .{ last_name, same_count });
 
             func_ref_vars[count] = try ast.Node.Tag.pub_var_simple.create(t.arena, .{
-                .name = @as([]const u8, @ptrCast(var_name)),
-                .init = ast.Node.initPayload(&ident_payload.base),
+                .name = var_name,
+                .init = try ast.Node.Tag.identifier.create(t.arena, func_name),
             });
             count += 1;
         }
-        variables_ptr.* = new_variables[0 .. old_variables.len + count];
+        decls_ptr.* = new_decls[0 .. old_decls.len + count];
     }
 }
 

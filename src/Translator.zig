@@ -456,7 +456,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             break :init ZigTag.opaque_literal.init();
         }
 
-        var fields = try std.ArrayList(ast.Payload.Record.Field).initCapacity(t.gpa, record_ty.fields.len);
+        var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, record_ty.fields.len);
         defer fields.deinit();
 
         // TODO: Add support for flexible array field functions
@@ -555,17 +555,16 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
-        const record_payload = try t.arena.create(ast.Payload.Record);
-        record_payload.* = .{
+        const container_payload = try t.arena.create(ast.Payload.Container);
+        container_payload.* = .{
             .base = .{ .tag = container_kind },
             .data = .{
                 .layout = .@"extern",
-                .fields = try t.arena.dupe(ast.Payload.Record.Field, fields.items),
-                .functions = try t.arena.dupe(ZigNode, functions.items),
-                .variables = &.{},
+                .fields = try t.arena.dupe(ast.Payload.Container.Field, fields.items),
+                .decls = try t.arena.dupe(ZigNode, functions.items),
             },
         };
-        break :init ZigNode.initPayload(&record_payload.base);
+        break :init ZigNode.initPayload(&container_payload.base);
     };
 
     const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
