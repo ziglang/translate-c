@@ -186,6 +186,8 @@ pub fn translate(
         }
     }
 
+    try translator.global_scope.processContainerMemberFns();
+
     var buf: std.ArrayList(u8) = .init(gpa);
     defer buf.deinit();
 
@@ -195,8 +197,6 @@ pub fn translate(
         \\
         \\
     );
-
-    try Scope.processContainerMemberFnsMap(&translator, translator.global_scope.container_member_fns_map);
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {
