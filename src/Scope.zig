@@ -13,6 +13,13 @@ pub const AliasList = std.ArrayListUnmanaged(struct {
     name: []const u8,
 });
 
+/// Associates a container (structure or union) with its relevant member functions.
+pub const ContainerMemberFns = struct {
+    container_decl_ptr: *ast.Node,
+    member_fns: std.ArrayListUnmanaged(*ast.Payload.Func) = .empty,
+};
+pub const ContainerMemberFnsHashMap = std.AutoArrayHashMapUnmanaged(aro.QualType, ContainerMemberFns);
+
 id: Id,
 parent: ?*Scope,
 
@@ -189,6 +196,7 @@ pub const Root = struct {
     sym_table: SymbolTable,
     blank_macros: std.StringArrayHashMapUnmanaged(void),
     nodes: std.ArrayListUnmanaged(ast.Node),
+    container_member_fns_map: ContainerMemberFnsHashMap,
 
     pub fn init(t: *Translator) Root {
         return .{
@@ -200,6 +208,7 @@ pub const Root = struct {
             .sym_table = .empty,
             .blank_macros = .empty,
             .nodes = .empty,
+            .container_member_fns_map = .empty,
         };
     }
 
@@ -207,6 +216,10 @@ pub const Root = struct {
         root.sym_table.deinit(root.translator.gpa);
         root.blank_macros.deinit(root.translator.gpa);
         root.nodes.deinit(root.translator.gpa);
+        for (root.container_member_fns_map.values()) |*members| {
+            members.member_fns.deinit(root.translator.gpa);
+        }
+        root.container_member_fns_map.deinit(root.translator.gpa);
     }
 
     /// Check if the global scope contains this name, without looking into the "future", e.g.
@@ -218,6 +231,83 @@ pub const Root = struct {
     /// Check if the global scope contains the name, includes all decls that haven't been translated yet.
     pub fn contains(root: *Root, name: []const u8) bool {
         return root.containsNow(name) or root.translator.global_names.contains(name) or root.translator.weak_global_names.contains(name);
+    }
+
+    pub fn addMemberFunction(root: *Root, func_ty: aro.Type.Func, func: *ast.Payload.Func) !void {
+        std.debug.assert(func.data.name != null);
+        if (func_ty.params.len == 0) return;
+
+        const param1_base = func_ty.params[0].qt.base(root.translator.comp);
+        const container_qt = if (param1_base.type == .pointer)
+            param1_base.type.pointer.child.base(root.translator.comp).qt
+        else
+            param1_base.qt;
+
+        if (root.container_member_fns_map.getPtr(container_qt)) |members| {
+            try members.member_fns.append(root.translator.gpa, func);
+        }
+    }
+
+    pub fn processContainerMemberFns(root: *Root) !void {
+        const gpa = root.translator.gpa;
+        const arena = root.translator.arena;
+
+        var member_names: std.StringArrayHashMapUnmanaged(u32) = .empty;
+        defer member_names.deinit(gpa);
+        for (root.container_member_fns_map.values()) |members| {
+            member_names.clearRetainingCapacity();
+            const decls_ptr = switch (members.container_decl_ptr.tag()) {
+                .@"struct", .@"union" => blk_record: {
+                    const payload: *ast.Payload.Container = @alignCast(@fieldParentPtr("base", members.container_decl_ptr.ptr_otherwise));
+                    // Avoid duplication with field names
+                    for (payload.data.fields) |field| {
+                        try member_names.put(gpa, field.name, 0);
+                    }
+                    break :blk_record &payload.data.decls;
+                },
+                .opaque_literal => blk_opaque: {
+                    const container_decl = try ast.Node.Tag.@"opaque".create(arena, .{
+                        .layout = .none,
+                        .fields = &.{},
+                        .decls = &.{},
+                    });
+                    members.container_decl_ptr.* = container_decl;
+                    break :blk_opaque &container_decl.castTag(.@"opaque").?.data.decls;
+                },
+                else => return,
+            };
+
+            const old_decls = decls_ptr.*;
+            const new_decls = try arena.alloc(ast.Node, old_decls.len + members.member_fns.items.len);
+            @memcpy(new_decls[0..old_decls.len], old_decls);
+            // Assume the allocator of payload.data.decls is arena,
+            // so don't add arena.free(old_variables).
+            const func_ref_vars = new_decls[old_decls.len..];
+            var count: u32 = 0;
+            for (members.member_fns.items) |func| {
+                const func_name = func.data.name.?;
+
+                const last_index = std.mem.lastIndexOf(u8, func_name, "_");
+                const last_name = if (last_index) |index| func_name[index + 1 ..] else continue;
+                var same_count: u32 = 0;
+                const gop = try member_names.getOrPutValue(gpa, last_name, same_count);
+                if (gop.found_existing) {
+                    gop.value_ptr.* += 1;
+                    same_count = gop.value_ptr.*;
+                }
+                const var_name = if (same_count == 0)
+                    last_name
+                else
+                    try std.fmt.allocPrint(arena, "{s}{d}", .{ last_name, same_count });
+
+                func_ref_vars[count] = try ast.Node.Tag.pub_var_simple.create(arena, .{
+                    .name = var_name,
+                    .init = try ast.Node.Tag.identifier.create(arena, func_name),
+                });
+                count += 1;
+            }
+            decls_ptr.* = new_decls[0 .. old_decls.len + count];
+        }
     }
 };
 

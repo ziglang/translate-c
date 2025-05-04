@@ -61,6 +61,7 @@ pub const Node = extern union {
         warning,
         @"struct",
         @"union",
+        @"opaque",
         @"comptime",
         @"defer",
         array_init,
@@ -386,7 +387,7 @@ pub const Node = extern union {
                 .call => Payload.Call,
                 .var_decl => Payload.VarDecl,
                 .func => Payload.Func,
-                .@"struct", .@"union" => Payload.Record,
+                .@"struct", .@"union", .@"opaque" => Payload.Container,
                 .tuple => Payload.TupleInit,
                 .container_init => Payload.ContainerInit,
                 .container_init_dot => Payload.ContainerInitDot,
@@ -627,13 +628,12 @@ pub const Payload = struct {
         type: Node,
     };
 
-    pub const Record = struct {
+    pub const Container = struct {
         base: Payload,
         data: struct {
             layout: enum { @"packed", @"extern", none },
             fields: []Field,
-            functions: []Node,
-            variables: []Node,
+            decls: []Node,
         },
 
         pub const Field = struct {
@@ -1972,7 +1972,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             const lhs = try renderNodeGrouped(c, payload.lhs);
             return renderFieldAccess(c, lhs, payload.field_name);
         },
-        .@"struct", .@"union" => return renderRecord(c, node),
+        .@"struct", .@"union", .@"opaque" => return renderContainer(c, node),
         .enum_constant => {
             const payload = node.castTag(.enum_constant).?.data;
 
@@ -2160,22 +2160,25 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
     }
 }
 
-fn renderRecord(c: *Context, node: Node) !NodeIndex {
-    const payload = @as(*Payload.Record, @alignCast(@fieldParentPtr("base", node.ptr_otherwise))).data;
+fn renderContainer(c: *Context, node: Node) !NodeIndex {
+    const payload = @as(*Payload.Container, @alignCast(@fieldParentPtr("base", node.ptr_otherwise))).data;
     if (payload.layout == .@"packed")
         _ = try c.addToken(.keyword_packed, "packed")
     else if (payload.layout == .@"extern")
         _ = try c.addToken(.keyword_extern, "extern");
     const kind_tok = if (node.tag() == .@"struct")
         try c.addToken(.keyword_struct, "struct")
+    else if (node.tag() == .@"union")
+        try c.addToken(.keyword_union, "union")
+    else if (node.tag() == .@"opaque")
+        try c.addToken(.keyword_opaque, "opaque")
     else
-        try c.addToken(.keyword_union, "union");
+        unreachable;
 
     _ = try c.addToken(.l_brace, "{");
 
-    const num_vars = payload.variables.len;
-    const num_funcs = payload.functions.len;
-    const total_members = payload.fields.len + num_vars + num_funcs;
+    const num_decls = payload.decls.len;
+    const total_members = payload.fields.len + num_decls;
     const members = try c.gpa.alloc(NodeIndex, total_members);
     defer c.gpa.free(members);
 
@@ -2236,11 +2239,8 @@ fn renderRecord(c: *Context, node: Node) !NodeIndex {
         }
         _ = try c.addToken(.comma, ",");
     }
-    for (payload.variables, 0..) |variable, i| {
-        members[payload.fields.len + i] = try renderNode(c, variable);
-    }
-    for (payload.functions, 0..) |function, i| {
-        members[payload.fields.len + num_vars + i] = try renderNode(c, function);
+    for (members[payload.fields.len..], payload.decls) |*member, decl| {
+        member.* = try renderNode(c, decl);
     }
     _ = try c.addToken(.r_brace, "}");
 
@@ -2254,7 +2254,7 @@ fn renderRecord(c: *Context, node: Node) !NodeIndex {
         });
     } else if (total_members <= 2) {
         return c.addNode(.{
-            .tag = if (num_funcs == 0) .container_decl_two_trailing else .container_decl_two,
+            .tag = .container_decl_two_trailing,
             .main_token = kind_tok,
             .data = .{ .opt_node_and_opt_node = .{
                 if (members.len >= 1) members[0].toOptional() else .none,
@@ -2264,7 +2264,7 @@ fn renderRecord(c: *Context, node: Node) !NodeIndex {
     } else {
         const span = try c.listToSpan(members);
         return c.addNode(.{
-            .tag = if (num_funcs == 0) .container_decl_trailing else .container_decl,
+            .tag = .container_decl_trailing,
             .main_token = kind_tok,
             .data = .{ .extra_range = span },
         });
@@ -2481,6 +2481,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         },
 
         .opaque_literal,
+        .@"opaque",
         .empty_array,
         .block_single,
         .add,

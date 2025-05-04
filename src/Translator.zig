@@ -186,6 +186,8 @@ pub fn translate(
         }
     }
 
+    try translator.global_scope.processContainerMemberFns();
+
     var buf: std.ArrayList(u8) = .init(gpa);
     defer buf.deinit();
 
@@ -454,7 +456,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             break :init ZigTag.opaque_literal.init();
         }
 
-        var fields = try std.ArrayList(ast.Payload.Record.Field).initCapacity(t.gpa, record_ty.fields.len);
+        var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, record_ty.fields.len);
         defer fields.deinit();
 
         // TODO: Add support for flexible array field functions
@@ -553,17 +555,16 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
-        const record_payload = try t.arena.create(ast.Payload.Record);
-        record_payload.* = .{
+        const container_payload = try t.arena.create(ast.Payload.Container);
+        container_payload.* = .{
             .base = .{ .tag = container_kind },
             .data = .{
                 .layout = .@"extern",
-                .fields = try t.arena.dupe(ast.Payload.Record.Field, fields.items),
-                .functions = try t.arena.dupe(ZigNode, functions.items),
-                .variables = &.{},
+                .fields = try t.arena.dupe(ast.Payload.Container.Field, fields.items),
+                .decls = try t.arena.dupe(ZigNode, functions.items),
             },
         };
-        break :init ZigNode.initPayload(&record_payload.base);
+        break :init ZigNode.initPayload(&container_payload.base);
     };
 
     const payload = try t.arena.create(ast.Payload.SimpleVarDecl);
@@ -582,6 +583,9 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         // mangled name is of no real use here.
         if (!is_unnamed and !t.global_names.contains(bare_name) and t.weak_global_names.contains(bare_name))
             try t.alias_list.append(t.gpa, .{ .alias = bare_name, .name = name });
+        try t.global_scope.container_member_fns_map.put(t.gpa, record_qt, .{
+            .container_decl_ptr = &payload.data.init,
+        });
     } else {
         try scope.appendNode(node);
         try bs.discardVariable(name);
@@ -640,6 +644,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         error.OutOfMemory => |e| return e,
     };
 
+    const proto_payload = proto_node.castTag(.func).?;
     if (!has_body) {
         if (scope.id != .root) {
             const bs: *Scope.Block = try scope.findBlockScope(t);
@@ -649,9 +654,9 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
             try bs.discardVariable(mangled_name);
             return;
         }
+        try t.global_scope.addMemberFunction(func_ty, proto_payload);
         return t.addTopLevelDecl(fn_name, proto_node);
     }
-    const proto_payload = proto_node.castTag(.func).?;
 
     // actual function definition with body
     const body_stmt = body_node.?.get(t.tree).compound_stmt;
@@ -700,6 +705,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         },
     };
 
+    try t.global_scope.addMemberFunction(func_ty, proto_payload);
     proto_payload.data.body = try block_scope.complete();
     return t.addTopLevelDecl(fn_name, proto_node);
 }
