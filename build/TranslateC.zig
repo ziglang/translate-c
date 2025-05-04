@@ -140,6 +140,47 @@ pub fn addCheckFile(translate_c: *TranslateC, expected_matches: []const []const 
     );
 }
 
+pub fn addAfterIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    translate_c.include_dirs.append(.{ .path_after = lazy_path.dupe(b) }) catch
+        @panic("OOM");
+    lazy_path.addStepDependencies(&translate_c.step);
+}
+
+pub fn addSystemIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    translate_c.include_dirs.append(.{ .path_system = lazy_path.dupe(b) }) catch
+        @panic("OOM");
+    lazy_path.addStepDependencies(&translate_c.step);
+}
+
+pub fn addIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    translate_c.include_dirs.append(.{ .path = lazy_path.dupe(b) }) catch
+        @panic("OOM");
+    lazy_path.addStepDependencies(&translate_c.step);
+}
+
+pub fn addConfigHeader(translate_c: *TranslateC, config_header: *Step.ConfigHeader) void {
+    translate_c.include_dirs.append(.{ .config_header_step = config_header }) catch
+        @panic("OOM");
+    translate_c.step.dependOn(&config_header.step);
+}
+
+pub fn addSystemFrameworkPath(translate_c: *TranslateC, directory_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    translate_c.include_dirs.append(.{ .framework_path_system = directory_path.dupe(b) }) catch
+        @panic("OOM");
+    directory_path.addStepDependencies(&translate_c.step);
+}
+
+pub fn addFrameworkPath(translate_c: *TranslateC, directory_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    translate_c.include_dirs.append(.{ .framework_path = directory_path.dupe(b) }) catch
+        @panic("OOM");
+    directory_path.addStepDependencies(&translate_c.step);
+}
+
 fn make(step: *Step, options: Step.MakeOptions) !void {
     _ = options;
     const b = step.owner;
@@ -187,6 +228,37 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
             b.cache_root, sub_path_dirname, @errorName(err),
         });
     };
+
+    // Aro's non-linux toolchains are not mature enough to find the necessary directories.
+    if (translate_c.target.result.os.tag != .linux) {
+        if (translate_c.target.result.isMinGW()) {
+            const libc = try std.zig.LibCDirs.detectFromBuilding(b.allocator, b.graph.zig_lib_directory.path.?, translate_c.target.result);
+            for (libc.libc_include_dir_list) |path| {
+                try argv_list.append("-isystem");
+                try argv_list.append(path);
+            }
+            try argv_list.append("-isystem");
+            try argv_list.append(try std.fs.path.join(b.allocator, &.{ b.graph.zig_lib_directory.path.?, "include" })); // for mm_malloc.h
+        } else {
+            const libc = try std.zig.LibCInstallation.findNative(.{
+                .target = translate_c.target.result,
+                .allocator = b.allocator,
+            });
+            if (libc.include_dir) |path| {
+                try argv_list.append("-I");
+                try argv_list.append(path);
+            }
+            if (libc.sys_include_dir) |path| {
+                try argv_list.append("-isystem");
+                try argv_list.append(path);
+            }
+        }
+    }
+
+    for (translate_c.include_dirs.items) |include_dir| {
+        try include_dir.appendZigProcessFlags(b, &argv_list, step);
+    }
+
     try argv_list.append("-o");
     try argv_list.append(out_path);
 
@@ -214,8 +286,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         },
         .Signal, .Stopped, .Unknown => {
             return step.fail(
-                "command to translate {s} failed unexpectedly",
-                .{resolved_source_path},
+                "command to translate {s} failed unexpectedly:{s}\n",
+                .{ resolved_source_path, stderr },
             );
         },
     }

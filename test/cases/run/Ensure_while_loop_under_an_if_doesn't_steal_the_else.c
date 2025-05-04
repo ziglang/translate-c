@@ -14,3 +14,4 @@ int main(void) {
 }
 
 // run
+// skip_windows=true

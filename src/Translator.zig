@@ -536,6 +536,25 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
+        // TODO check for flexible array.
+        if (record_ty.fields.len == 0 and
+            t.comp.target.os.tag == .windows and t.comp.target.abi == .msvc)
+        {
+            // In MSVC empty records have the same size as their alignment.
+            const padding_bits = record_ty.layout.?.size_bits;
+            const alignment_bits = record_ty.layout.?.field_alignment_bits;
+
+            try fields.append(.{
+                .name = "_padding",
+                .type = try ZigTag.type.create(t.arena, try std.fmt.allocPrint(t.arena, "u{d}", .{padding_bits})),
+                .alignment = @divExact(alignment_bits, 8),
+                .default_value = if (container_kind == .@"struct")
+                    ZigTag.zero_literal.init()
+                else
+                    null,
+            });
+        }
+
         const record_payload = try t.arena.create(ast.Payload.Record);
         record_payload.* = .{
             .base = .{ .tag = container_kind },
@@ -1895,8 +1914,9 @@ fn transCastExpr(
             if (cast.implicit) {
                 if (t.tree.value_map.get(cast.operand)) |val| {
                     const max_int = try aro.Value.maxInt(cast.qt, t.comp);
+                    const min_int = try aro.Value.minInt(cast.qt, t.comp);
 
-                    if (val.compare(.lte, max_int, t.comp)) {
+                    if (val.compare(.lte, max_int, t.comp) and val.compare(.gte, min_int, t.comp)) {
                         break :int_cast try t.transExprCoercing(scope, cast.operand, .used);
                     }
                 }
@@ -2238,7 +2258,7 @@ fn transAssignExpr(t: *Translator, scope: *Scope, bin: Node.Binary, used: Result
 
     const tmp = try block_scope.reserveMangledName("tmp");
 
-    var rhs = try t.transExprCoercing(&block_scope.base, bin.rhs, .used);
+    var rhs = try t.transExpr(&block_scope.base, bin.rhs, .used);
     const lhs_qt = bin.lhs.qt(t.tree);
     if (rhs.isBoolRes() and !lhs_qt.is(t.comp, .bool)) {
         rhs = try ZigTag.int_from_bool.create(t.arena, rhs);

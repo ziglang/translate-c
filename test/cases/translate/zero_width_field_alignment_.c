@@ -6,6 +6,7 @@ struct __attribute__((packed)) foo {
 };
 
 // translate
+// target=native-linux
 //
 // const struct_unnamed_1 = extern struct {};
 // const union_unnamed_2 = extern union {};
