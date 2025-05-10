@@ -26,7 +26,6 @@ void call() {
 }
 
 // translate
-// expect=fail
 //
 // pub extern fn fn_int(x: c_int) void;
 // pub extern fn fn_f32(x: f32) void;
@@ -35,19 +34,19 @@ void call() {
 // pub extern fn fn_bool(x: bool) void;
 // pub extern fn fn_ptr(x: ?*anyopaque) void;
 // pub export fn call() void {
-//     fn_int(@as(c_int, @intFromFloat(3.0)));
-//     fn_int(@as(c_int, @intFromFloat(3.0)));
-//     fn_int(@as(c_int, 1094861636));
-//     fn_f32(@as(f32, @floatFromInt(@as(c_int, 3))));
-//     fn_f64(@as(f64, @floatFromInt(@as(c_int, 3))));
-//     fn_char(@as(u8, @bitCast(@as(i8, @truncate(@as(c_int, '3'))))));
-//     fn_char(@as(u8, @bitCast(@as(i8, @truncate(@as(c_int, '\x01'))))));
-//     fn_char(@as(u8, @bitCast(@as(i8, @truncate(@as(c_int, 0))))));
-//     fn_f32(3.0);
-//     fn_f64(3.0);
+//     fn_int(@intFromFloat(3));
+//     fn_int(@intFromFloat(3));
+//     fn_int(1094861636);
+//     fn_f32(@floatFromInt(3));
+//     fn_f64(@floatFromInt(3));
+//     fn_char('3');
+//     fn_char('\x01');
+//     fn_char(0);
+//     fn_f32(3);
+//     fn_f64(3);
 //     fn_bool(@as(c_int, 123) != 0);
 //     fn_bool(@as(c_int, 0) != 0);
 //     fn_bool(@intFromPtr(&fn_int) != 0);
-//     fn_int(@as(c_int, @intCast(@intFromPtr(&fn_int))));
-//     fn_ptr(@as(?*anyopaque, @ptrFromInt(@as(c_int, 42))));
+//     fn_int(@intCast(@intFromPtr(&fn_int)));
+//     fn_ptr(@ptrFromInt(@as(c_int, 42)));
 // }

@@ -10,12 +10,11 @@ void deref(struct outer *s) {
 }
 
 // translate
-// expect=fail
 //
 // pub const struct_inner = opaque {};
 //
 // pub const struct_outer = extern struct {
-//     thing: c_int = @import("std").mem.zeroes(c_int),
+//     thing: c_int = 0,
 //     sub_struct: struct_inner = @import("std").mem.zeroes(struct_inner),
 // };
 //

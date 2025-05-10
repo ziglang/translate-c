@@ -5,6 +5,7 @@ void bar(void) {
 }
 
 // translate
+// expect=fail
 //
 // pub extern fn foo() void;
 // pub export fn bar() void {

@@ -12,7 +12,6 @@ void foo(char c) {
 }
 
 // translate
-// expect=fail
 //
 // pub var a: c_long = 2;
 // pub var b: c_long = 2;
@@ -24,11 +23,11 @@ void foo(char c) {
 //     _ = &a_2;
 //     var b_3: u8 = 123;
 //     _ = &b_3;
-//     b_3 = @as(u8, @bitCast(@as(i8, @truncate(a_2))));
+//     b_3 = @bitCast(@as(i8, @truncate(a_2)));
 //     {
 //         var d: c_int = 5;
 //         _ = &d;
 //     }
-//     var d: c_uint = @as(c_uint, @bitCast(@as(c_int, 440)));
+//     var d: c_uint = 440;
 //     _ = &d;
 // }

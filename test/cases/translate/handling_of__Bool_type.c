@@ -14,7 +14,7 @@ _Bool foo(_Bool x) {
 //     _ = &a;
 //     var b: bool = @as(c_int, @intFromBool(a)) != @as(c_int, 0);
 //     _ = &b;
-//     var c: bool = @intFromPtr(foo) != 0;
+//     var c: bool = @intFromPtr(&foo) != 0;
 //     _ = &c;
 //     return foo(@as(c_int, @intFromBool(c)) != @as(c_int, @intFromBool(b)));
 // }

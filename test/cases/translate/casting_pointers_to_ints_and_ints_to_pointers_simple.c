@@ -8,6 +8,6 @@ void foo(void) {
 // pub export fn foo() void {
 //     var x: c_int = 23;
 //     _ = &x;
-//     var y: c_int = @intFromPtr(@as([*c]c_int, @ptrFromInt(y)));
+//     var y: c_int = @intCast(@intFromPtr(@as([*c]c_int, @ptrFromInt(y))));
 //     _ = &y;
 // }
