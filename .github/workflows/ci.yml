@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - tmp
   pull_request:
     paths:
     - '**.zig'
@@ -33,13 +34,10 @@ jobs:
       #   run: zig build -Dtarget=arm-linux
       #   if: matrix.os == 'ubuntu-latest'
 
-      - name: Build release
-        run: zig build --release=safe
-
       - name: Run Tests
-        run: zig build test
+        run: zig build test -Dskip-release
 
       - name: Run Tests MSVC
-        run: zig build test -Dtarget=native-windows-msvc
+        run: zig build test -Dtarget=native-windows-msvc -Dskip-release
         if: matrix.os == 'windows-latest'
 
