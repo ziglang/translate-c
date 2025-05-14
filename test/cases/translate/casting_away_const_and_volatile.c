@@ -7,7 +7,6 @@ void baz(volatile int *a) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo(arg_a: [*c]c_int) void {
 //     var a = arg_a;
@@ -16,10 +15,10 @@ void baz(volatile int *a) {
 // pub export fn bar(arg_a: [*c]const c_int) void {
 //     var a = arg_a;
 //     _ = &a;
-//     foo(@as([*c]c_int, @ptrCast(@volatileCast(@constCast(a)))));
+//     foo(@constCast(@ptrCast(@alignCast(a))));
 // }
 // pub export fn baz(arg_a: [*c]volatile c_int) void {
 //     var a = arg_a;
 //     _ = &a;
-//     foo(@as([*c]c_int, @ptrCast(@volatileCast(@constCast(a)))));
+//     foo(@volatileCast(@ptrCast(@alignCast(a))));
 // }

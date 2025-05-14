@@ -6,7 +6,6 @@ __attribute__ ((__section__("NEAR,.data")))
 void my_fn(void) { }
 
 // translate
-// expect=fail
 //
 // pub extern var my_array: [16]u8 linksection("NEAR,.data");
 // pub export fn my_fn() linksection("NEAR,.data") void {}

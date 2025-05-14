@@ -269,6 +269,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
             },
             .static_assert => {},
             .empty_decl => {},
+            .global_asm => {},
             else => unreachable,
         }
     }
@@ -337,6 +338,9 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
         },
         .static_assert => |static_assert| {
             try t.transStaticAssert(&t.global_scope.base, static_assert);
+        },
+        .global_asm => |global_asm| {
+            try t.transGlobalAsm(&t.global_scope.base, global_asm);
         },
         .empty_decl => {},
         else => unreachable,
@@ -768,6 +772,13 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         break :init ZigTag.undefined_literal.init();
     };
 
+    const linksection_string = blk: {
+        if (variable.qt.getAttribute(t.comp, .section)) |section| {
+            break :blk t.comp.interner.get(section.name.ref()).bytes;
+        }
+        break :blk null;
+    };
+
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
@@ -775,7 +786,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         .is_extern = variable.storage_class == .@"extern",
         .is_export = toplevel and variable.storage_class == .auto,
         .is_threadlocal = variable.thread_local,
-        .linksection_string = null,
+        .linksection_string = linksection_string,
         .alignment = alignment,
         .name = if (use_base_name) base_name else name,
         .type = type_node,
@@ -908,6 +919,23 @@ fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAs
 
     const assert_node = try ZigTag.static_assert.create(t.arena, .{ .lhs = condition, .rhs = diagnostic });
     try scope.appendNode(assert_node);
+}
+
+fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Error!void {
+    const asm_string = t.tree.value_map.get(global_asm.asm_str).?;
+    const bytes = t.comp.interner.get(asm_string.ref()).bytes;
+
+    var buf = std.ArrayList(u8).init(t.gpa);
+    defer buf.deinit();
+    try aro.Value.printString(bytes, global_asm.asm_str.qt(t.tree), t.comp, buf.writer());
+
+    const str_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+
+    const asm_node = try ZigTag.asm_simple.create(t.arena, str_node);
+    const block = try ZigTag.block_single.create(t.arena, asm_node);
+    const comptime_node = try ZigTag.@"comptime".create(t.arena, block);
+
+    try scope.appendNode(comptime_node);
 }
 
 // ================
@@ -2045,9 +2073,20 @@ fn transCastExpr(
         },
         .bitcast => bitcast: {
             const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
-            if (cast.qt.isPointer(t.comp) and cast.operand.qt(t.tree).isPointer(t.comp)) {
-                const align_cast = try ZigTag.align_cast.create(t.arena, sub_expr_node);
-                break :bitcast try ZigTag.ptr_cast.create(t.arena, align_cast);
+            const operand_qt = cast.operand.qt(t.tree);
+            if (cast.qt.isPointer(t.comp) and operand_qt.isPointer(t.comp)) {
+                var casted = try ZigTag.align_cast.create(t.arena, sub_expr_node);
+                casted = try ZigTag.ptr_cast.create(t.arena, casted);
+
+                const src_elem = operand_qt.childType(t.comp);
+                const dest_elem = cast.qt.childType(t.comp);
+                if (src_elem.@"const" and !dest_elem.@"const") {
+                    casted = try ZigTag.const_cast.create(t.arena, casted);
+                }
+                if (src_elem.@"volatile" and !dest_elem.@"volatile") {
+                    casted = try ZigTag.volatile_cast.create(t.arena, casted);
+                }
+                break :bitcast casted;
             }
             return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO non-pointer bitcast {s}", .{@tagName(cast.qt.base(t.comp).type)});
         },
