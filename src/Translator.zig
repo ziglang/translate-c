@@ -641,6 +641,8 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
                 .aarch64, .aarch64_be => .aarch64_vfabi,
                 else => .c,
             },
+            .x86_64_sysv => .x86_64_sysv,
+            .x86_64_win => .x86_64_win,
         } else .c,
     };
 
