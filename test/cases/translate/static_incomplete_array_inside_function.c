@@ -3,11 +3,10 @@ void foo(void) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn foo() void {
-//     const v2 = struct {
-//         const static: [5:0]u8 = "2.2.2".*;
+//     const static_local_v2 = struct {
+//         var v2: [5:0]u8 = "2.2.2".*;
 //     };
-//     _ = &v2;
+//     _ = &static_local_v2;
 // }

@@ -239,7 +239,7 @@ pub const Node = extern union {
         /// pub inline fn name(params) return_type body
         pub_inline_fn,
 
-        /// [0]type{}
+        /// array_type{}
         empty_array,
         /// [1]type{val} ** count
         array_filler,
@@ -1955,7 +1955,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .empty_array => {
             const payload = node.castTag(.empty_array).?.data;
 
-            const type_expr = try renderArrayType(c, 0, payload);
+            const type_expr = try renderNode(c, payload);
             return renderArrayInit(c, type_expr, &.{});
         },
         .array_init => {

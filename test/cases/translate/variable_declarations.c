@@ -3,7 +3,6 @@ static char arr1[] = "hello";
 char arr2[] = "hello";
 
 // translate
-// expect=fail
 //
 // pub export var arr0: [5:0]u8 = "hello".*;
 // pub var arr1: [5:0]u8 = "hello".*;

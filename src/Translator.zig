@@ -741,7 +741,10 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         }
     }
 
-    const type_node = t.transType(scope, variable.qt, variable.name_tok) catch |err| switch (err) {
+    const type_node = (if (variable.initializer) |init|
+        t.transTypeInit(scope, variable.qt, init, variable.name_tok)
+    else
+        t.transType(scope, variable.qt, variable.name_tok)) catch |err| switch (err) {
         error.UnsupportedType => {
             return t.failDecl(variable.name_tok, name, "unable to translate variable declaration type", .{});
         },
@@ -750,7 +753,11 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
 
     const init_node = init: {
         if (variable.initializer) |init| {
-            const init_node = t.transExprCoercing(scope, init, .used) catch |err| switch (err) {
+            const maybe_literal = init.get(t.tree);
+            const init_node = (if (maybe_literal == .string_literal_expr)
+                t.transStringLiteralInitializer(init, maybe_literal.string_literal_expr, type_node)
+            else
+                t.transExprCoercing(scope, init, .used)) catch |err| switch (err) {
                 error.UnsupportedTranslation, error.UnsupportedType => {
                     return t.failDecl(variable.name_tok, name, "unable to resolve var init expr", .{});
                 },
@@ -779,6 +786,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         break :blk null;
     };
 
+    // TODO `const char arr[]` is translated as `var arr: T`
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
@@ -1293,6 +1301,31 @@ fn transTypeIntWidthOf(t: *Translator, qt: QualType, is_signed: bool) TypeError!
     });
 }
 
+fn transTypeInit(
+    t: *Translator,
+    scope: *Scope,
+    qt: QualType,
+    init: Node.Index,
+    source_loc: TokenIndex,
+) TypeError!ZigNode {
+    switch (init.get(t.tree)) {
+        .string_literal_expr => |literal| {
+            const elem_ty = try t.transType(scope, qt.childType(t.comp), source_loc);
+
+            const string_lit_size = literal.qt.arrayLen(t.comp).?;
+            const array_size = qt.arrayLen(t.comp).?;
+
+            if (array_size == string_lit_size) {
+                return ZigTag.null_sentinel_array_type.create(t.arena, .{ .len = array_size - 1, .elem_type = elem_ty });
+            } else {
+                return ZigTag.array_type.create(t.arena, .{ .len = array_size, .elem_type = elem_ty });
+            }
+        },
+        else => {},
+    }
+    return t.transType(scope, qt, source_loc);
+}
+
 // ============
 // Type helpers
 // ============
@@ -1772,19 +1805,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .int_literal => return t.transIntLiteral(scope, expr, used, .with_as),
         .char_literal => return t.transCharLiteral(scope, expr, used, .with_as),
         .float_literal => return t.transFloatLiteral(scope, expr, used, .with_as),
-        .string_literal_expr => |literal| res: {
-            const val = t.tree.value_map.get(expr).?;
-            const str_qt = literal.qt;
-
-            const bytes = t.comp.interner.get(val.ref()).bytes;
-            var buf = std.ArrayList(u8).init(t.gpa);
-            defer buf.deinit();
-
-            try buf.ensureUnusedCapacity(bytes.len);
-            try aro.Value.printString(bytes, str_qt, t.comp, buf.writer());
-
-            break :res try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
-        },
+        .string_literal_expr => |literal| try t.transStringLiteral(scope, expr, literal),
         .bool_literal => res: {
             const val = t.tree.value_map.get(expr).?;
             break :res if (val.toBool(t.comp))
@@ -1815,8 +1836,8 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
 
         .generic_expr => |generic| return t.transExpr(scope, generic.chosen, used),
-        .generic_association_expr => unreachable,
-        .generic_default_expr => unreachable,
+        .generic_association_expr => |generic| return t.transExpr(scope, generic.expr, used),
+        .generic_default_expr => |generic| return t.transExpr(scope, generic.expr, used),
 
         .stmt_expr => |stmt_expr| return t.transStmtExpr(scope, stmt_expr, used),
 
@@ -1981,17 +2002,12 @@ fn transCastExpr(
         },
         .null_to_pointer => ZigTag.null_literal.init(),
         .array_to_pointer => array_to_pointer: {
-            if (t.tree.value_map.get(cast.operand)) |val| {
-                const str_qt = cast.qt;
-                const bytes = t.comp.interner.get(val.ref()).bytes;
-                var buf = std.ArrayList(u8).init(t.gpa);
-                defer buf.deinit();
-
-                try buf.ensureUnusedCapacity(bytes.len);
-                try aro.Value.printString(bytes, str_qt, t.comp, buf.writer());
-
-                const string_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
-                return t.maybeSuppressResult(used, string_node);
+            const maybe_literal = cast.operand.get(t.tree);
+            if (cast.operand.get(t.tree) == .string_literal_expr) {
+                const literal = maybe_literal.string_literal_expr;
+                if (literal.kind == .utf8 or literal.kind == .ascii) {
+                    return try t.transExpr(scope, cast.operand, used);
+                }
             }
 
             if (cast.operand.qt(t.tree).arrayLen(t.comp) == null) {
@@ -2846,6 +2862,117 @@ fn transFloatLiteral(
         .rhs = float_lit_node,
     });
     return t.maybeSuppressResult(used, as_node);
+}
+
+fn transStringLiteral(
+    t: *Translator,
+    scope: *Scope,
+    expr: Node.Index,
+    literal: Node.CharLiteral,
+) TransError!ZigNode {
+    switch (literal.kind) {
+        .ascii, .utf8 => return t.transNarrowStringLiteral(expr, literal),
+        .utf16, .utf32, .wide => {
+            const name = try std.fmt.allocPrint(t.arena, "{s}_string_{d}", .{ @tagName(literal.kind), t.getMangle() });
+
+            const array_type = try t.transTypeInit(scope, literal.qt, expr, literal.literal_tok);
+            const lit_array = try t.transStringLiteralInitializer(expr, literal, array_type);
+            const decl = try ZigTag.var_simple.create(t.arena, .{ .name = name, .init = lit_array });
+            try scope.appendNode(decl);
+            return ZigTag.identifier.create(t.arena, name);
+        },
+    }
+}
+
+fn transNarrowStringLiteral(
+    t: *Translator,
+    expr: Node.Index,
+    literal: Node.CharLiteral,
+) TransError!ZigNode {
+    const val = t.tree.value_map.get(expr).?;
+
+    const bytes = t.comp.interner.get(val.ref()).bytes;
+    var buf = std.ArrayList(u8).init(t.gpa);
+    defer buf.deinit();
+
+    try buf.ensureUnusedCapacity(bytes.len);
+    try aro.Value.printString(bytes, literal.qt, t.comp, buf.writer());
+
+    return ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+}
+
+/// Translate a string literal that is initializing an array. In general narrow string
+/// literals become `"<string>".*` or `"<string>"[0..<size>].*` if they need truncation.
+/// Wide string literals become an array of integers. zero-fillers pad out the array to
+/// the appropriate length, if necessary.
+fn transStringLiteralInitializer(
+    t: *Translator,
+    expr: Node.Index,
+    literal: Node.CharLiteral,
+    array_type: ZigNode,
+) TransError!ZigNode {
+    assert(array_type.tag() == .array_type or array_type.tag() == .null_sentinel_array_type);
+
+    const is_narrow = literal.kind == .ascii or literal.kind == .utf8;
+
+    // The length of the string literal excluding the sentinel.
+    const str_length = literal.qt.arrayLen(t.comp).? - 1;
+
+    const payload = (array_type.castTag(.array_type) orelse array_type.castTag(.null_sentinel_array_type).?).data;
+    const array_size = payload.len;
+    const elem_type = payload.elem_type;
+
+    if (array_size == 0) return ZigTag.empty_array.create(t.arena, array_type);
+
+    const num_inits = @min(str_length, array_size);
+    if (num_inits == 0) {
+        return ZigTag.array_filler.create(t.arena, .{
+            .type = elem_type,
+            .filler = ZigTag.zero_literal.init(),
+            .count = array_size,
+        });
+    }
+
+    const init_node = if (is_narrow) blk: {
+        // "string literal".* or string literal"[0..num_inits].*
+        var str = try t.transNarrowStringLiteral(expr, literal);
+        if (str_length != array_size) str = try ZigTag.string_slice.create(t.arena, .{ .string = str, .end = num_inits });
+        break :blk try ZigTag.deref.create(t.arena, str);
+    } else blk: {
+        const size = literal.qt.childType(t.comp).sizeof(t.comp);
+
+        const val = t.tree.value_map.get(expr).?;
+        const bytes = t.comp.interner.get(val.ref()).bytes;
+
+        const init_list = try t.arena.alloc(ZigNode, num_inits);
+        for (init_list, 0..) |*item, i| {
+            const codepoint = switch (size) {
+                2 => @as(*const u16, @alignCast(@ptrCast(bytes.ptr + i * 2))).*,
+                4 => @as(*const u32, @alignCast(@ptrCast(bytes.ptr + i * 4))).*,
+                else => unreachable,
+            };
+            item.* = try t.createCharLiteralNode(false, codepoint);
+        }
+        const init_args: ast.Payload.Array.ArrayTypeInfo = .{ .len = num_inits, .elem_type = elem_type };
+        const init_array_type = if (array_type.tag() == .array_type)
+            try ZigTag.array_type.create(t.arena, init_args)
+        else
+            try ZigTag.null_sentinel_array_type.create(t.arena, init_args);
+        break :blk try ZigTag.array_init.create(t.arena, .{
+            .cond = init_array_type,
+            .cases = init_list,
+        });
+    };
+
+    if (num_inits == array_size) return init_node;
+    assert(array_size > str_length); // If array_size <= str_length, `num_inits == array_size` and we've already returned.
+
+    const filler_node = try ZigTag.array_filler.create(t.arena, .{
+        .type = elem_type,
+        .filler = ZigTag.zero_literal.init(),
+        .count = array_size - str_length,
+    });
+    return ZigTag.array_cat.create(t.arena, .{ .lhs = init_node, .rhs = filler_node });
 }
 
 fn transCompoundLiteral(

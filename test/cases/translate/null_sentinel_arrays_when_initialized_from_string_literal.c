@@ -15,12 +15,11 @@ char no_null[3] = "abc";
 uint32_t no_null_w[3] = U"💯💯💯";
 
 // translate
-// expect=fail
 //
 // pub export var zero: [0]u8 = [0]u8{};
 // pub export var zero_w: [0]u32 = [0]u32{};
-// pub export var empty_incomplete: [1]u8 = [1]u8{0} ** 1;
-// pub export var empty_incomplete_w: [1]u32 = [1]u32{0} ** 1;
+// pub export var empty_incomplete: [0:0]u8 = [0:0]u8{};
+// pub export var empty_incomplete_w: [0:0]u32 = [0:0]u32{};
 // pub export var empty_constant: [100]u8 = [1]u8{0} ** 100;
 // pub export var empty_constant_w: [100]u32 = [1]u32{0} ** 100;
 // pub export var incomplete: [3:0]u8 = "abc".*;
