@@ -811,6 +811,22 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         }
         try scope.appendNode(node);
         try bs.discardVariable(name);
+
+        if (variable.qt.getAttribute(t.comp, .cleanup)) |cleanup_attr| {
+            const cleanup_fn_name = t.tree.tokSlice(cleanup_attr.function.tok);
+            const mangled_fn_name = scope.getAlias(cleanup_fn_name) orelse cleanup_fn_name;
+            const fn_id = try ZigTag.identifier.create(t.arena, mangled_fn_name);
+
+            const varname = try ZigTag.identifier.create(t.arena, name);
+            const args = try t.arena.alloc(ZigNode, 1);
+            args[0] = try ZigTag.address_of.create(t.arena, varname);
+
+            const cleanup_call = try ZigTag.call.create(t.arena, .{ .lhs = fn_id, .args = args });
+            const discard = try ZigTag.discard.create(t.arena, .{ .should_skip = false, .value = cleanup_call });
+            const deferred_cleanup = try ZigTag.@"defer".create(t.arena, discard);
+
+            try bs.statements.append(t.gpa, deferred_cleanup);
+        }
     }
 }
 
