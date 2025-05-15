@@ -2124,6 +2124,29 @@ fn transCastExpr(
             }
             return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO non-pointer bitcast {s}", .{@tagName(cast.qt.base(t.comp).type)});
         },
+        .union_cast => union_cast: {
+            const union_type = try t.transType(scope, cast.qt, cast.l_paren);
+
+            const operand_qt = cast.operand.qt(t.tree);
+            const union_base = cast.qt.base(t.comp);
+            const field = for (union_base.type.@"union".fields) |field| {
+                if (field.qt.eql(operand_qt, t.comp)) break field;
+            } else unreachable;
+            const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
+                .parent = union_base.qt,
+                .field = field.qt,
+            }).? else field.name.lookup(t.comp);
+
+            const field_init = try t.arena.create(ast.Payload.ContainerInit.Initializer);
+            field_init.* = .{
+                .name = field_name,
+                .value = try t.transExpr(scope, cast.operand, .used),
+            };
+            break :union_cast try ZigTag.container_init.create(t.arena, .{
+                .lhs = union_type,
+                .inits = field_init[0..1],
+            });
+        },
         else => return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO translate {s} cast", .{@tagName(cast.kind)}),
     };
     if (suppress_as == .no_as) return t.maybeSuppressResult(used, operand);
