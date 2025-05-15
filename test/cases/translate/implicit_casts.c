@@ -48,5 +48,5 @@ void call() {
 //     fn_bool(@as(c_int, 0) != 0);
 //     fn_bool(@intFromPtr(&fn_int) != 0);
 //     fn_int(@intCast(@intFromPtr(&fn_int)));
-//     fn_ptr(@ptrFromInt(@as(c_int, 42)));
+//     fn_ptr(@ptrFromInt(@as(usize, @intCast(@as(c_int, 42)))));
 // }

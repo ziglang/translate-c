@@ -5,13 +5,13 @@ void function(struct opaque *opaque) {
 }
 
 // translate
-// expect=fail
 //
 // pub const struct_opaque = opaque {};
-// pub const struct_opaque_2 = opaque {};
 // pub export fn function(arg_opaque_1: ?*struct_opaque) void {
 //     var opaque_1 = arg_opaque_1;
 //     _ = &opaque_1;
-//     var cast: ?*struct_opaque_2 = @as(?*struct_opaque_2, @ptrCast(opaque_1));
+//     const struct_opaque_2_2 = opaque {};
+//     _ = &struct_opaque_2_2;
+//     var cast: ?*struct_opaque_2_2 = @ptrCast(@alignCast(opaque_1));
 //     _ = &cast;
 // }
