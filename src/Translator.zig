@@ -3134,10 +3134,17 @@ fn transUnionInit(
     }
 
     const union_type = try t.transType(scope, union_init.union_qt, union_init.l_brace_tok);
+
+    const union_base = union_init.union_qt.base(t.comp);
+    const field = union_base.type.@"union".fields[union_init.field_index];
+    const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
+        .parent = union_base.qt,
+        .field = field.qt,
+    }).? else field.name.lookup(t.comp);
+
     const field_init = try t.arena.create(ast.Payload.ContainerInit.Initializer);
-    const field = union_init.union_qt.base(t.comp).type.@"union".fields[union_init.field_index];
     field_init.* = .{
-        .name = field.name.lookup(t.comp),
+        .name = field_name,
         .value = try t.transExprCoercing(scope, init_expr, .used),
     };
     const container_init = try ZigTag.container_init.create(t.arena, .{
@@ -3157,13 +3164,18 @@ fn transStructInit(
     const struct_type = try t.transType(scope, struct_init.container_qt, struct_init.l_brace_tok);
     const field_inits = try t.arena.alloc(ast.Payload.ContainerInit.Initializer, struct_init.items.len);
 
+    const struct_base = struct_init.container_qt.base(t.comp);
     for (
         field_inits,
         struct_init.items,
-        struct_init.container_qt.base(t.comp).type.@"struct".fields,
+        struct_base.type.@"struct".fields,
     ) |*init, field_expr, field| {
+        const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
+            .parent = struct_base.qt,
+            .field = field.qt,
+        }).? else field.name.lookup(t.comp);
         init.* = .{
-            .name = field.name.lookup(t.comp),
+            .name = field_name,
             .value = try t.transExprCoercing(scope, field_expr, .used),
         };
     }
