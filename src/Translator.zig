@@ -2038,7 +2038,14 @@ fn transCastExpr(
             break :array_to_pointer try ZigTag.ptr_cast.create(t.arena, align_cast);
         },
         .int_to_pointer => int_to_pointer: {
-            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            var sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            const operand_qt = cast.operand.qt(t.tree);
+            if (operand_qt.signedness(t.comp) == .signed or operand_qt.bitSizeof(t.comp) > t.comp.target.ptrBitWidth()) {
+                sub_expr_node = try ZigTag.as.create(t.arena, .{
+                    .lhs = try ZigTag.type.create(t.arena, "usize"),
+                    .rhs = try ZigTag.int_cast.create(t.arena, sub_expr_node),
+                });
+            }
             break :int_to_pointer try ZigTag.ptr_from_int.create(t.arena, sub_expr_node);
         },
         .int_to_bool => {
@@ -2101,12 +2108,12 @@ fn transCastExpr(
             break :float_to_int try ZigTag.int_from_float.create(t.arena, sub_expr_node);
         },
         .pointer_to_int => pointer_to_int: {
-            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            const sub_expr_node = try t.transPointerCastExpr(scope, cast.operand);
             const ptr_node = try ZigTag.int_from_ptr.create(t.arena, sub_expr_node);
             break :pointer_to_int try ZigTag.int_cast.create(t.arena, ptr_node);
         },
         .bitcast => bitcast: {
-            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
+            const sub_expr_node = try t.transPointerCastExpr(scope, cast.operand);
             const operand_qt = cast.operand.qt(t.tree);
             if (cast.qt.isPointer(t.comp) and operand_qt.isPointer(t.comp)) {
                 var casted = try ZigTag.align_cast.create(t.arena, sub_expr_node);
@@ -2114,7 +2121,7 @@ fn transCastExpr(
 
                 const src_elem = operand_qt.childType(t.comp);
                 const dest_elem = cast.qt.childType(t.comp);
-                if (src_elem.@"const" and !dest_elem.@"const") {
+                if ((src_elem.@"const" or src_elem.is(t.comp, .func)) and !dest_elem.@"const") {
                     casted = try ZigTag.const_cast.create(t.arena, casted);
                 }
                 if (src_elem.@"volatile" and !dest_elem.@"volatile") {
@@ -2156,6 +2163,17 @@ fn transCastExpr(
         .rhs = operand,
     });
     return as;
+}
+
+/// Same as `transExpr` but adds a `&` if the expression is an identifier referencing a function type.
+fn transPointerCastExpr(t: *Translator, scope: *Scope, expr: Node.Index) TransError!ZigNode {
+    const sub_expr_node = try t.transExpr(scope, expr, .used);
+    if (expr.qt(t.tree).get(t.comp, .pointer)) |ptr_ty| {
+        if (ptr_ty.child.is(t.comp, .func) and sub_expr_node.tag() == .identifier) {
+            return ZigTag.address_of.create(t.arena, sub_expr_node);
+        }
+    }
+    return sub_expr_node;
 }
 
 fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) TransError!ZigNode {

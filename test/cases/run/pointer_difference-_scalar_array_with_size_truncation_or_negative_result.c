@@ -17,4 +17,3 @@ int main() {
 }
 
 // run
-// expect=fail
