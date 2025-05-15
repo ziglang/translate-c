@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const mem = std.mem;
 const process = std.process;
 const aro = @import("aro");
 const Translator = @import("Translator.zig");
@@ -67,7 +68,17 @@ pub fn main() u8 {
     return @intFromBool(comp.diagnostics.errors != 0);
 }
 
-fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void {
+pub const usage =
+    \\Usage {s}: [options] file [CC options]
+    \\
+    \\General options:
+    \\  -h, --help      Print this message.
+    \\  -v, --version   Print translate-c version.
+    \\
+    \\
+;
+
+fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     const gpa = d.comp.gpa;
 
     var macro_buf = std.ArrayList(u8).init(gpa);
@@ -75,8 +86,30 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const []const u8) !void
 
     try macro_buf.appendSlice("#define __TRANSLATE_C__ 1\n");
 
-    // TODO override --help and --version
-    assert(!try d.parseArgs(std.io.null_writer, macro_buf.writer(), args));
+    const aro_args = args: {
+        var i: usize = 0;
+        for (args) |arg| {
+            args[i] = arg;
+            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
+                const stdout = std.io.getStdOut();
+                stdout.writer().print(usage, .{args[0]}) catch |er| {
+                    return d.fatal("unable to print usage: {s}", .{aro.Driver.errorDescription(er)});
+                };
+                return;
+            } else if (mem.eql(u8, arg, "-v") or mem.eql(u8, arg, "--version")) {
+                const stdout = std.io.getStdOut();
+                // TODO add version
+                stdout.writeAll("0.0.0-dev\n") catch |er| {
+                    return d.fatal("unable to print version: {s}", .{aro.Driver.errorDescription(er)});
+                };
+                return;
+            } else {
+                i += 1;
+            }
+        }
+        break :args args[0..i];
+    };
+    assert(!try d.parseArgs(std.io.null_writer, macro_buf.writer(), aro_args));
 
     if (d.inputs.items.len != 1) {
         return d.fatal("expected exactly one input file", .{});
