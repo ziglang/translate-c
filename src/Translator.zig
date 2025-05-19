@@ -1375,7 +1375,7 @@ fn typeWasDemotedToOpaque(t: *Translator, qt: QualType) bool {
 }
 
 fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
-    if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
+    if (t.signedness(qt) == .unsigned) {
         // unsigned integer overflow wraps around.
         return true;
     } else {
@@ -1386,7 +1386,8 @@ fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
 
 /// Signedness of type when translated to Zig.
 /// Different from `QualType.signedness()` for `char` and enums.
-fn signedness(t: *Translator, qt: QualType) std.builtin.Signedness {
+/// Returns null for non-int types.
+fn signedness(t: *Translator, qt: QualType) ?std.builtin.Signedness {
     return loop: switch (qt.base(t.comp).type) {
         .bool => .unsigned,
         .bit_int => |bit_int| bit_int.signedness,
@@ -1399,7 +1400,7 @@ fn signedness(t: *Translator, qt: QualType) std.builtin.Signedness {
             const tag_qt = enum_ty.tag orelse return .signed;
             continue :loop tag_qt.base(t.comp).type;
         },
-        else => unreachable,
+        else => return null,
     };
 }
 
@@ -1715,7 +1716,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
                 } else sub_expr_node;
 
                 break :res try ZigTag.negate.create(t.arena, to_negate);
-            } else if (qt.isInt(t.comp) and t.signedness(operand_qt) == .unsigned) {
+            } else if (t.signedness(operand_qt) == .unsigned) {
                 // use -% x for unsigned integers
                 break :res try ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, negate_expr.operand, .used));
             } else return t.fail(error.UnsupportedTranslation, negate_expr.op_tok, "C negation with non float non integer", .{});
@@ -1744,13 +1745,13 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             // `ptr + idx` and `idx + ptr` -> ptr + @as(usize, @bitCast(@as(isize, @intCast(idx))))
             const lhs_qt = add_expr.lhs.qt(t.tree);
             const rhs_qt = add_expr.rhs.qt(t.tree);
-            if (qt.isPointer(t.comp) and ((lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed) or
-                (rhs_qt.isInt(t.comp) and t.signedness(rhs_qt) == .signed)))
+            if (qt.isPointer(t.comp) and (t.signedness(lhs_qt) == .signed or
+                t.signedness(rhs_qt) == .signed))
             {
                 break :res try t.transPointerArithmeticSignedOp(scope, add_expr, .add);
             }
 
-            if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
+            if (t.signedness(qt) == .unsigned) {
                 break :res try t.transBinExpr(scope, add_expr, .add_wrap);
             } else {
                 break :res try t.transBinExpr(scope, add_expr, .add);
@@ -1760,21 +1761,21 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             // `ptr - idx` -> ptr - @as(usize, @bitCast(@as(isize, @intCast(idx))))
             const lhs_qt = sub_expr.lhs.qt(t.tree);
             const rhs_qt = sub_expr.rhs.qt(t.tree);
-            if (qt.isPointer(t.comp) and ((lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed) or
-                (rhs_qt.isInt(t.comp) and t.signedness(rhs_qt) == .signed)))
+            if (qt.isPointer(t.comp) and (t.signedness(lhs_qt) == .signed or
+                t.signedness(rhs_qt) == .signed))
             {
                 break :res try t.transPointerArithmeticSignedOp(scope, sub_expr, .sub);
             }
 
             if (sub_expr.lhs.qt(t.tree).isPointer(t.comp) and sub_expr.rhs.qt(t.tree).isPointer(t.comp)) {
                 break :res try t.transPtrDiffExpr(scope, sub_expr);
-            } else if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
+            } else if (t.signedness(qt) == .unsigned) {
                 break :res try t.transBinExpr(scope, sub_expr, .sub_wrap);
             } else {
                 break :res try t.transBinExpr(scope, sub_expr, .sub);
             }
         },
-        .mul_expr => |mul_expr| if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned)
+        .mul_expr => |mul_expr| if (t.signedness(qt) == .unsigned)
             try t.transBinExpr(scope, mul_expr, .mul_wrap)
         else
             try t.transBinExpr(scope, mul_expr, .mul),
@@ -2492,7 +2493,7 @@ fn transCompoundAssignSimple(t: *Translator, scope: *Scope, lhs_dummy_opt: ?ZigN
     const assign_rhs = assign.rhs.get(t.tree);
     if (assign_rhs == .cast) return null;
 
-    const is_signed = assign.qt.isInt(t.comp) and t.signedness(assign.qt) == .signed;
+    const is_signed = t.signedness(assign.qt) == .signed;
     switch (assign_rhs) {
         .div_expr, .mod_expr => if (is_signed) return null,
         else => {},
@@ -2650,8 +2651,7 @@ fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin: Node.Binar
     std.debug.assert(op_id == .add or op_id == .sub);
 
     const lhs_qt = bin.lhs.qt(t.tree);
-    const swap_operands = op_id == .add and
-        (lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed);
+    const swap_operands = op_id == .add and t.signedness(lhs_qt) == .signed;
 
     const swizzled_lhs = if (swap_operands) bin.rhs else bin.lhs;
     const swizzled_rhs = if (swap_operands) bin.lhs else bin.rhs;
