@@ -149,9 +149,6 @@ pub fn translate(
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    // Override char to always be unsigned since that's how we will be translating it.
-    comp.langopts.char_signedness_override = .unsigned;
-
     var translator: Translator = .{
         .gpa = gpa,
         .arena = arena,
@@ -1378,13 +1375,32 @@ fn typeWasDemotedToOpaque(t: *Translator, qt: QualType) bool {
 }
 
 fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
-    if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
+    if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
         // unsigned integer overflow wraps around.
         return true;
     } else {
         // float, signed integer, and pointer overflow is undefined behavior.
         return false;
     }
+}
+
+/// Signedness of type when translated to Zig.
+/// Different from `QualType.signedness()` for `char` and enums.
+fn signedness(t: *Translator, qt: QualType) std.builtin.Signedness {
+    return loop: switch (qt.base(t.comp).type) {
+        .bool => .unsigned,
+        .bit_int => |bit_int| bit_int.signedness,
+        .int => |int_ty| switch (int_ty) {
+            .char => .unsigned, // Always translated as u8
+            .schar, .short, .int, .long, .long_long, .int128 => .signed,
+            .uchar, .ushort, .uint, .ulong, .ulong_long, .uint128 => .unsigned,
+        },
+        .@"enum" => |enum_ty| {
+            const tag_qt = enum_ty.tag orelse return .signed;
+            continue :loop tag_qt.base(t.comp).type;
+        },
+        else => unreachable,
+    };
 }
 
 // =====================
@@ -1699,13 +1715,13 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
                 } else sub_expr_node;
 
                 break :res try ZigTag.negate.create(t.arena, to_negate);
-            } else if (qt.isInt(t.comp) and operand_qt.signedness(t.comp) == .unsigned) {
+            } else if (qt.isInt(t.comp) and t.signedness(operand_qt) == .unsigned) {
                 // use -% x for unsigned integers
                 break :res try ZigTag.negate_wrap.create(t.arena, try t.transExpr(scope, negate_expr.operand, .used));
             } else return t.fail(error.UnsupportedTranslation, negate_expr.op_tok, "C negation with non float non integer", .{});
         },
         .div_expr => |div_expr| res: {
-            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .signed) {
+            if (qt.isInt(t.comp) and t.signedness(qt) == .signed) {
                 // signed integer division uses @divTrunc
                 const lhs = try t.transExpr(scope, div_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, div_expr.rhs, .used);
@@ -1715,7 +1731,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
             break :res try t.transBinExpr(scope, div_expr, .div);
         },
         .mod_expr => |mod_expr| res: {
-            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .signed) {
+            if (qt.isInt(t.comp) and t.signedness(qt) == .signed) {
                 // signed integer remainder uses __helpers.signedRemainder
                 const lhs = try t.transExpr(scope, mod_expr.lhs, .used);
                 const rhs = try t.transExpr(scope, mod_expr.rhs, .used);
@@ -1726,13 +1742,15 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .add_expr => |add_expr| res: {
             // `ptr + idx` and `idx + ptr` -> ptr + @as(usize, @bitCast(@as(isize, @intCast(idx))))
-            if (qt.isPointer(t.comp) and (add_expr.lhs.qt(t.tree).signedness(t.comp) == .signed or
-                add_expr.rhs.qt(t.tree).signedness(t.comp) == .signed))
+            const lhs_qt = add_expr.lhs.qt(t.tree);
+            const rhs_qt = add_expr.rhs.qt(t.tree);
+            if (qt.isPointer(t.comp) and ((lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed) or
+                (rhs_qt.isInt(t.comp) and t.signedness(rhs_qt) == .signed)))
             {
                 break :res try t.transPointerArithmeticSignedOp(scope, add_expr, .add);
             }
 
-            if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
+            if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
                 break :res try t.transBinExpr(scope, add_expr, .add_wrap);
             } else {
                 break :res try t.transBinExpr(scope, add_expr, .add);
@@ -1740,21 +1758,23 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         },
         .sub_expr => |sub_expr| res: {
             // `ptr - idx` -> ptr - @as(usize, @bitCast(@as(isize, @intCast(idx))))
-            if (qt.isPointer(t.comp) and (sub_expr.lhs.qt(t.tree).signedness(t.comp) == .signed or
-                sub_expr.rhs.qt(t.tree).signedness(t.comp) == .signed))
+            const lhs_qt = sub_expr.lhs.qt(t.tree);
+            const rhs_qt = sub_expr.rhs.qt(t.tree);
+            if (qt.isPointer(t.comp) and ((lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed) or
+                (rhs_qt.isInt(t.comp) and t.signedness(rhs_qt) == .signed)))
             {
                 break :res try t.transPointerArithmeticSignedOp(scope, sub_expr, .sub);
             }
 
             if (sub_expr.lhs.qt(t.tree).isPointer(t.comp) and sub_expr.rhs.qt(t.tree).isPointer(t.comp)) {
                 break :res try t.transPtrDiffExpr(scope, sub_expr);
-            } else if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned) {
+            } else if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned) {
                 break :res try t.transBinExpr(scope, sub_expr, .sub_wrap);
             } else {
                 break :res try t.transBinExpr(scope, sub_expr, .sub);
             }
         },
-        .mul_expr => |mul_expr| if (qt.isInt(t.comp) and qt.signedness(t.comp) == .unsigned)
+        .mul_expr => |mul_expr| if (qt.isInt(t.comp) and t.signedness(qt) == .unsigned)
             try t.transBinExpr(scope, mul_expr, .mul_wrap)
         else
             try t.transBinExpr(scope, mul_expr, .mul),
@@ -1993,10 +2013,10 @@ fn transCastExpr(
             }
 
             const src_dest_order = src_qt.intRankOrder(dest_qt, t.comp);
-            const different_sign = src_qt.signedness(t.comp) != dest_qt.signedness(t.comp);
-            const needs_bitcast = different_sign and !(src_qt.signedness(t.comp) == .unsigned and src_dest_order == .lt);
+            const different_sign = t.signedness(src_qt) != t.signedness(dest_qt);
+            const needs_bitcast = different_sign and !(t.signedness(src_qt) == .unsigned and src_dest_order == .lt);
 
-            var operand = try t.transExprCoercing(scope, cast.operand, .used);
+            var operand = try t.transExpr(scope, cast.operand, .used);
             if (operand.isBoolRes()) {
                 operand = try ZigTag.int_from_bool.create(t.arena, operand);
             } else if (src_dest_order == .gt) {
@@ -2005,7 +2025,7 @@ fn transCastExpr(
             }
             if (needs_bitcast and src_dest_order != .eq) {
                 operand = try ZigTag.as.create(t.arena, .{
-                    .lhs = try t.transTypeIntWidthOf(dest_qt, src_qt.signedness(t.comp) == .signed),
+                    .lhs = try t.transTypeIntWidthOf(dest_qt, t.signedness(src_qt) == .signed),
                     .rhs = operand,
                 });
             }
@@ -2040,7 +2060,7 @@ fn transCastExpr(
         .int_to_pointer => int_to_pointer: {
             var sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             const operand_qt = cast.operand.qt(t.tree);
-            if (operand_qt.signedness(t.comp) == .signed or operand_qt.bitSizeof(t.comp) > t.comp.target.ptrBitWidth()) {
+            if (t.signedness(operand_qt) == .signed or operand_qt.bitSizeof(t.comp) > t.comp.target.ptrBitWidth()) {
                 sub_expr_node = try ZigTag.as.create(t.arena, .{
                     .lhs = try ZigTag.type.create(t.arena, "usize"),
                     .rhs = try ZigTag.int_cast.create(t.arena, sub_expr_node),
@@ -2078,25 +2098,25 @@ fn transCastExpr(
             return t.maybeSuppressResult(used, cmp_node);
         },
         .bool_to_int => bool_to_int: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             break :bool_to_int try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
         },
         .bool_to_float => bool_to_float: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
             break :bool_to_float try ZigTag.float_from_int.create(t.arena, int_from_bool);
         },
         .bool_to_pointer => bool_to_pointer: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             const int_from_bool = try ZigTag.int_from_bool.create(t.arena, sub_expr_node);
             break :bool_to_pointer try ZigTag.ptr_from_int.create(t.arena, int_from_bool);
         },
         .float_cast => float_cast: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             break :float_cast try ZigTag.float_cast.create(t.arena, sub_expr_node);
         },
         .int_to_float => int_to_float: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, used);
             const int_node = if (sub_expr_node.isBoolRes())
                 try ZigTag.int_from_bool.create(t.arena, sub_expr_node)
             else
@@ -2104,7 +2124,7 @@ fn transCastExpr(
             break :int_to_float try ZigTag.float_from_int.create(t.arena, int_node);
         },
         .float_to_int => float_to_int: {
-            const sub_expr_node = try t.transExprCoercing(scope, cast.operand, .used);
+            const sub_expr_node = try t.transExpr(scope, cast.operand, .used);
             break :float_to_int try ZigTag.int_from_float.create(t.arena, sub_expr_node);
         },
         .pointer_to_int => pointer_to_int: {
@@ -2472,7 +2492,7 @@ fn transCompoundAssignSimple(t: *Translator, scope: *Scope, lhs_dummy_opt: ?ZigN
     const assign_rhs = assign.rhs.get(t.tree);
     if (assign_rhs == .cast) return null;
 
-    const is_signed = assign.qt.isInt(t.comp) and assign.qt.signedness(t.comp) == .signed;
+    const is_signed = assign.qt.isInt(t.comp) and t.signedness(assign.qt) == .signed;
     switch (assign_rhs) {
         .div_expr, .mod_expr => if (is_signed) return null,
         else => {},
@@ -2483,12 +2503,12 @@ fn transCompoundAssignSimple(t: *Translator, scope: *Scope, lhs_dummy_opt: ?ZigN
         .add_expr => |bin| .{
             bin,
             if (t.typeHasWrappingOverflow(bin.qt)) .add_wrap_assign else .add_assign,
-            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+            if (lhs_ptr and t.signedness(bin.rhs.qt(t.tree)) == .signed) .usize else .none,
         },
         .sub_expr => |bin| .{
             bin,
             if (t.typeHasWrappingOverflow(bin.qt)) .sub_wrap_assign else .sub_assign,
-            if (lhs_ptr and bin.rhs.qt(t.tree).signedness(t.comp) == .signed) .usize else .none,
+            if (lhs_ptr and t.signedness(bin.rhs.qt(t.tree)) == .signed) .usize else .none,
         },
         .mul_expr => |bin| .{
             bin,
@@ -2631,7 +2651,7 @@ fn transPointerArithmeticSignedOp(t: *Translator, scope: *Scope, bin: Node.Binar
 
     const lhs_qt = bin.lhs.qt(t.tree);
     const swap_operands = op_id == .add and
-        (lhs_qt.isInt(t.comp) and lhs_qt.signedness(t.comp) == .signed);
+        (lhs_qt.isInt(t.comp) and t.signedness(lhs_qt) == .signed);
 
     const swizzled_lhs = if (swap_operands) bin.rhs else bin.lhs;
     const swizzled_rhs = if (swap_operands) bin.lhs else bin.rhs;
@@ -2701,7 +2721,7 @@ fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAcces
             val.compare(.gte, .zero, t.comp)
         else
             false;
-        const is_signed = index_qt.signedness(t.comp) == .signed;
+        const is_signed = t.signedness(index_qt) == .signed;
 
         if (is_signed and !is_nonnegative_int_literal) {
             // First cast to `isize` to get proper sign extension and

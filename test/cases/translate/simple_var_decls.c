@@ -11,6 +11,7 @@ void foo(void) {
 }
 
 // translate
+// target=x86_64-linux
 //
 // pub export fn foo() void {
 //     var a: c_int = undefined;
@@ -29,6 +30,6 @@ void foo(void) {
 //     _ = &g;
 //     var h: c_ushort = @bitCast(@as(c_short, @truncate(e)));
 //     _ = &h;
-//     const i: c_uint = @bitCast(@as(c_int, @truncate(4294967297)));
+//     const i: c_uint = @bitCast(@as(c_int, @truncate(@as(c_long, 4294967297))));
 //     _ = &i;
 // }

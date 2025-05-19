@@ -22,7 +22,6 @@ int and_or_non_bool(int a, float b, void *c) {
 }
 
 // translate
-// expect=fail
 // target=native-linux
 //
 // pub const FooA: c_int = 0;
@@ -37,15 +36,15 @@ int and_or_non_bool(int a, float b, void *c) {
 //     _ = &b;
 //     var c = arg_c;
 //     _ = &c;
-//     var d: enum_Foo = @as(c_uint, @bitCast(FooA));
+//     var d: enum_Foo = FooA;
 //     _ = &d;
-//     var e: c_int = @intFromBool((a != 0) and (b != 0));
+//     var e: c_int = @intFromBool((@as(f32, @floatFromInt(a)) != 0) and (b != 0));
 //     _ = &e;
 //     var f: c_int = @intFromBool((b != 0) and (c != null));
 //     _ = &f;
 //     var g: c_int = @intFromBool((a != 0) and (c != null));
 //     _ = &g;
-//     var h: c_int = @intFromBool((a != 0) or (b != 0));
+//     var h: c_int = @intFromBool((@as(f32, @floatFromInt(a)) != 0) or (b != 0));
 //     _ = &h;
 //     var i: c_int = @intFromBool((b != 0) or (c != null));
 //     _ = &i;
@@ -53,13 +52,13 @@ int and_or_non_bool(int a, float b, void *c) {
 //     _ = &j;
 //     var k: c_int = @intFromBool((a != 0) or (@as(c_int, @bitCast(d)) != 0));
 //     _ = &k;
-//     var l: c_int = @intFromBool((@as(c_int, @bitCast(d)) != 0) and (b != 0));
+//     var l: c_int = @intFromBool((@as(f32, @floatFromInt(@as(c_int, @bitCast(d)))) != 0) and (b != 0));
 //     _ = &l;
 //     var m: c_int = @intFromBool((c != null) or (d != 0));
 //     _ = &m;
 //     var td: SomeTypedef = 44;
 //     _ = &td;
-//     var o: c_int = @intFromBool((td != 0) or (b != 0));
+//     var o: c_int = @intFromBool((@as(f32, @floatFromInt(td)) != 0) or (b != 0));
 //     _ = &o;
 //     var p: c_int = @intFromBool((c != null) and (td != 0));
 //     _ = &p;
