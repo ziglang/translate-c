@@ -26,7 +26,6 @@ enum EnumWithInits {
 };
 
 // translate
-// expect=fail
 // target=native-linux
 //
 // pub const VAL01: c_int = 0;

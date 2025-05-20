@@ -23,7 +23,6 @@ enum i {
 };
 
 // translate
-// expect=fail
 // target=native-windows-msvc
 //
 // pub const a: c_int = 0;
@@ -34,7 +33,7 @@ enum i {
 // pub const f: c_int = 4;
 // pub const g: c_int = 5;
 // const enum_unnamed_1 = c_int;
-// pub export var h: enum_unnamed_1 = @as(c_uint, @bitCast(e));
+// pub export var h: enum_unnamed_1 = e;
 // pub const i: c_int = 0;
 // pub const j: c_int = 1;
 // pub const k: c_int = 2;
