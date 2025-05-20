@@ -2061,12 +2061,25 @@ fn transCastExpr(
         },
         .null_to_pointer => ZigTag.null_literal.init(),
         .array_to_pointer => array_to_pointer: {
-            const maybe_literal = cast.operand.get(t.tree);
-            if (cast.operand.get(t.tree) == .string_literal_expr) {
-                const literal = maybe_literal.string_literal_expr;
-                if (literal.kind == .utf8 or literal.kind == .ascii) {
-                    return try t.transExpr(scope, cast.operand, used);
-                }
+            loop: switch (cast.operand.get(t.tree)) {
+                .string_literal_expr => |literal| {
+                    if (literal.kind == .utf8 or literal.kind == .ascii) {
+                        return try t.transExpr(scope, cast.operand, used);
+                    }
+                },
+                .paren_expr => |paren_expr| {
+                    continue :loop paren_expr.operand.get(t.tree);
+                },
+                .generic_expr => |generic| {
+                    continue :loop generic.chosen.get(t.tree);
+                },
+                .generic_association_expr => |generic| {
+                    continue :loop generic.expr.get(t.tree);
+                },
+                .generic_default_expr => |generic| {
+                    continue :loop generic.expr.get(t.tree);
+                },
+                else => {},
             }
 
             if (cast.operand.qt(t.tree).arrayLen(t.comp) == null) {
@@ -2834,6 +2847,12 @@ fn transCall(
             },
             .generic_expr => |generic| {
                 continue :loop generic.chosen.get(t.tree);
+            },
+            .generic_association_expr => |generic| {
+                continue :loop generic.expr.get(t.tree);
+            },
+            .generic_default_expr => |generic| {
+                continue :loop generic.expr.get(t.tree);
             },
             else => {},
         }
