@@ -6,7 +6,7 @@ void foo(void) {
 //
 // pub export fn foo() void {
 //     const static_local_v2 = struct {
-//         var v2: [5:0]u8 = "2.2.2".*;
+//         const v2: [5:0]u8 = "2.2.2".*;
 //     };
 //     _ = &static_local_v2;
 // }

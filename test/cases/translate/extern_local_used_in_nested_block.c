@@ -12,7 +12,9 @@ int foo(int bar) {
 //     var bar = arg_bar;
 //     _ = &bar;
 //     const extern_local_arr = struct {
-//         extern var arr: [*c]c_int;
+//         const arr: [*c]c_int = @extern([*c]c_int, .{
+//             .name = "arr",
+//         });
 //     };
 //     _ = &extern_local_arr;
 //     if (bar != 0) {

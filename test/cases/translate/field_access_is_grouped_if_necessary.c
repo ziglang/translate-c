@@ -11,11 +11,7 @@ unsigned long foo(unsigned long x) {
 //         _x: c_ulong,
 //     };
 //     _ = &union_unnamed_1;
-//     const union_unnamed_2 = extern union {
-//         _x: c_ulong,
-//     };
-//     _ = &union_unnamed_2;
-//     return @as(union_unnamed_2, union_unnamed_2{
+//     return @as(union_unnamed_1, union_unnamed_1{
 //         ._x = x,
 //     })._x;
 // }

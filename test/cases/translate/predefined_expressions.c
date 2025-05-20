@@ -8,11 +8,11 @@ void foo(void) {
 //
 // pub export fn foo() void {
 //     const static_local___PRETTY_FUNCTION__ = struct {
-//         var __PRETTY_FUNCTION__: [14:0]u8 = "void foo(void)".*;
+//         const __PRETTY_FUNCTION__: [14:0]u8 = "void foo(void)".*;
 //     };
 //     _ = &static_local___PRETTY_FUNCTION__;
 //     const static_local___func__ = struct {
-//         var __func__: [3:0]u8 = "foo".*;
+//         const __func__: [3:0]u8 = "foo".*;
 //     };
 //     _ = &static_local___func__;
 //     _ = static_local___func__.__func__;

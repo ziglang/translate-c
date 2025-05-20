@@ -750,6 +750,10 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         else => |e| return e,
     };
 
+    const array_ty = variable.qt.get(t.comp, .array);
+    var is_const = variable.qt.@"const" or (array_ty != null and array_ty.?.elem.@"const");
+    var is_extern = variable.storage_class == .@"extern";
+
     const init_node = init: {
         if (variable.initializer) |init| {
             const maybe_literal = init.get(t.tree);
@@ -769,7 +773,24 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
                 break :init init_node;
             }
         }
-        if (variable.storage_class == .@"extern") break :init null;
+        if (variable.storage_class == .@"extern") {
+            if (array_ty != null and array_ty.?.len == .incomplete) {
+                // Oh no, an extern array of unknown size! These are really fun because there's no
+                // direct equivalent in Zig. To translate correctly, we'll have to create a C-pointer
+                // to the data initialized via @extern.
+
+                // Since this is really a pointer to the underlying data, we tweak a few properties.
+                is_extern = false;
+                is_const = true;
+
+                const name_str = try std.fmt.allocPrint(t.arena, "\"{s}\"", .{base_name});
+                break :init try ZigTag.builtin_extern.create(t.arena, .{
+                    .type = type_node,
+                    .name = try ZigTag.string_literal.create(t.arena, name_str),
+                });
+            }
+            break :init null;
+        }
         if (toplevel or variable.storage_class == .static or variable.thread_local) {
             // The C language specification states that variables with static or threadlocal
             // storage without an initializer are initialized to a zero value.
@@ -785,12 +806,11 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         break :blk null;
     };
 
-    // TODO `const char arr[]` is translated as `var arr: T`
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
-        .is_const = variable.qt.@"const",
-        .is_extern = variable.storage_class == .@"extern",
+        .is_const = is_const,
+        .is_extern = is_extern,
         .is_export = toplevel and variable.storage_class == .auto,
         .is_threadlocal = variable.thread_local,
         .linksection_string = linksection_string,
