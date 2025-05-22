@@ -27,12 +27,11 @@ static void foo(void){
 //         4,
 //     };
 //     _ = &arr2;
-//     var arr3: [6]c_int = [4]c_int{
+//     var arr3: [6]c_int = [3]c_int{
 //         100,
 //         4,
-//         2,
 //         5,
-//     } ++ [1]c_int{0} ** 2;
+//     } ++ [1]c_int{0} ** 3;
 //     _ = &arr3;
 //     var arr4: [7]c_int = [1]c_int{0} ** 1 ++ [2]c_int{
 //         1,
