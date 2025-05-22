@@ -10,14 +10,14 @@ typedef struct ONENAMEWITHSTRUCT
 } ONENAMEWITHSTRUCT;
 
 // translate
-// expect=fail
 // target=native-windows-msvc
 //
 // pub const struct_NAMED = extern struct {
-//     name: c_long = @import("std").mem.zeroes(c_long),
+//     name: c_long = 0,
 // };
 // pub const NAMED = struct_NAMED;
 // pub const struct_ONENAMEWITHSTRUCT = extern struct {
-//     unnamed_0: struct_NAMED =  = @import("std").mem.zeroes(struct_NAMED),
-//     b: c_long = @import("std").mem.zeroes(c_long),
+//     unnamed_0: NAMED = @import("std").mem.zeroes(NAMED),
+//     b: c_long = 0,
 // };
+// pub const ONENAMEWITHSTRUCT = struct_ONENAMEWITHSTRUCT;

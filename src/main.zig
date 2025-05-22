@@ -125,7 +125,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         error.AroIncludeNotFound => return d.fatal("unable to find Aro builtin headers", .{}),
     };
 
-    const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines, null) catch |err| switch (err) {
+    const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
         error.StreamTooLong => return d.fatal("builtin macro source exceeded max size", .{}),
         else => |e| return e,
     };
