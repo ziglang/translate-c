@@ -1092,6 +1092,11 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         },
         .attributed => |attributed_ty| continue :loop attributed_ty.base.type(t.comp),
         .typeof => |typeof_ty| continue :loop typeof_ty.base.type(t.comp),
+        .vector => |vector_ty| {
+            const len = try t.createNumberNode(vector_ty.len, .int);
+            const elem_type = try t.transType(scope, vector_ty.elem, source_loc);
+            return ZigTag.vector.create(t.arena, .{ .lhs = len, .rhs = elem_type });
+        },
         else => return t.fail(error.UnsupportedType, source_loc, "unsupported type: '{s}'", .{try t.getTypeStr(qt)}),
     }
 }
@@ -1900,6 +1905,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
 
         .stmt_expr => |stmt_expr| return t.transStmtExpr(scope, stmt_expr, used),
 
+        .builtin_convertvector => |convertvector| try t.transConvertvectorExpr(scope, convertvector),
+        .builtin_shufflevector => |shufflevector| try t.transShufflevectorExpr(scope, shufflevector),
+
         .compound_stmt,
         .static_assert,
         .return_stmt,
@@ -2032,28 +2040,8 @@ fn transCastExpr(
                     }
                 }
             }
-
-            const src_dest_order = src_qt.intRankOrder(dest_qt, t.comp);
-            const different_sign = t.signedness(src_qt) != t.signedness(dest_qt);
-            const needs_bitcast = different_sign and !(t.signedness(src_qt) == .unsigned and src_dest_order == .lt);
-
-            var operand = try t.transExpr(scope, cast.operand, .used);
-            if (operand.isBoolRes()) {
-                operand = try ZigTag.int_from_bool.create(t.arena, operand);
-            } else if (src_dest_order == .gt) {
-                // No C type is smaller than the 1 bit from @intFromBool
-                operand = try ZigTag.truncate.create(t.arena, operand);
-            }
-            if (needs_bitcast and src_dest_order != .eq) {
-                operand = try ZigTag.as.create(t.arena, .{
-                    .lhs = try t.transTypeIntWidthOf(dest_qt, t.signedness(src_qt) == .signed),
-                    .rhs = operand,
-                });
-            }
-            if (needs_bitcast) {
-                break :int_cast try ZigTag.bit_cast.create(t.arena, operand);
-            }
-            break :int_cast operand;
+            const operand = try t.transExpr(scope, cast.operand, .used);
+            break :int_cast try t.transIntCast(operand, src_qt, dest_qt);
         },
         .to_void => {
             assert(used == .unused);
@@ -2183,7 +2171,8 @@ fn transCastExpr(
                 }
                 break :bitcast casted;
             }
-            return t.fail(error.UnsupportedTranslation, cast.l_paren, "TODO non-pointer bitcast {s}", .{@tagName(cast.qt.base(t.comp).type)});
+
+            break :bitcast try ZigTag.bit_cast.create(t.arena, sub_expr_node);
         },
         .union_cast => union_cast: {
             const union_type = try t.transType(scope, cast.qt, cast.l_paren);
@@ -2217,6 +2206,30 @@ fn transCastExpr(
         .rhs = operand,
     });
     return as;
+}
+
+fn transIntCast(t: *Translator, operand: ZigNode, src_qt: QualType, dest_qt: QualType) !ZigNode {
+    const src_dest_order = src_qt.intRankOrder(dest_qt, t.comp);
+    const different_sign = t.signedness(src_qt) != t.signedness(dest_qt);
+    const needs_bitcast = different_sign and !(t.signedness(src_qt) == .unsigned and src_dest_order == .lt);
+
+    var casted = operand;
+    if (casted.isBoolRes()) {
+        casted = try ZigTag.int_from_bool.create(t.arena, casted);
+    } else if (src_dest_order == .gt) {
+        // No C type is smaller than the 1 bit from @intFromBool
+        casted = try ZigTag.truncate.create(t.arena, casted);
+    }
+    if (needs_bitcast) {
+        if (src_dest_order != .eq) {
+            casted = try ZigTag.as.create(t.arena, .{
+                .lhs = try t.transTypeIntWidthOf(dest_qt, t.signedness(src_qt) == .signed),
+                .rhs = casted,
+            });
+        }
+        return ZigTag.bit_cast.create(t.arena, casted);
+    }
+    return casted;
 }
 
 /// Same as `transExpr` but adds a `&` if the expression is an identifier referencing a function type.
@@ -3344,6 +3357,102 @@ fn transStmtExpr(
     return block_scope.complete();
 }
 
+fn transConvertvectorExpr(
+    t: *Translator,
+    scope: *Scope,
+    convertvector: Node.Convertvector,
+) TransError!ZigNode {
+    var block_scope = try Scope.Block.init(t, scope, true);
+    defer block_scope.deinit();
+
+    const src_expr_node = try t.transExpr(&block_scope.base, convertvector.operand, .used);
+    const tmp = try block_scope.reserveMangledName("tmp");
+    const tmp_decl = try ZigTag.var_simple.create(t.arena, .{ .name = tmp, .init = src_expr_node });
+    try block_scope.statements.append(t.gpa, tmp_decl);
+    const tmp_ident = try ZigTag.identifier.create(t.arena, tmp);
+
+    const dest_type_node = try t.transType(&block_scope.base, convertvector.dest_qt, convertvector.builtin_tok);
+    const dest_vec_ty = convertvector.dest_qt.get(t.comp, .vector).?;
+    const src_vec_ty = convertvector.operand.qt(t.tree).get(t.comp, .vector).?;
+
+    const src_elem_sk = src_vec_ty.elem.scalarKind(t.comp);
+    const dest_elem_sk = convertvector.dest_qt.childType(t.comp).scalarKind(t.comp);
+
+    const items = try t.arena.alloc(ZigNode, dest_vec_ty.len);
+    for (items, 0..dest_vec_ty.len) |*item, i| {
+        const value = try ZigTag.array_access.create(t.arena, .{
+            .lhs = tmp_ident,
+            .rhs = try t.createNumberNode(i, .int),
+        });
+
+        if (src_elem_sk == .float and dest_elem_sk == .float) {
+            item.* = try ZigTag.float_cast.create(t.arena, value);
+        } else if (src_elem_sk == .float) {
+            item.* = try ZigTag.int_from_float.create(t.arena, value);
+        } else if (dest_elem_sk == .float) {
+            item.* = try ZigTag.float_from_int.create(t.arena, value);
+        } else {
+            item.* = try t.transIntCast(value, src_vec_ty.elem, dest_vec_ty.elem);
+        }
+    }
+
+    const vec_init = try ZigTag.array_init.create(t.arena, .{
+        .cond = dest_type_node,
+        .cases = items,
+    });
+    const break_node = try ZigTag.break_val.create(t.arena, .{
+        .label = block_scope.label,
+        .val = vec_init,
+    });
+    try block_scope.statements.append(t.gpa, break_node);
+
+    return block_scope.complete();
+}
+
+fn transShufflevectorExpr(
+    t: *Translator,
+    scope: *Scope,
+    shufflevector: Node.Shufflevector,
+) TransError!ZigNode {
+    if (shufflevector.indexes.len == 0) {
+        return t.fail(error.UnsupportedTranslation, shufflevector.builtin_tok, "@shuffle needs at least 1 index", .{});
+    }
+
+    const a = try t.transExpr(scope, shufflevector.lhs, .used);
+    const b = try t.transExpr(scope, shufflevector.rhs, .used);
+
+    // First two arguments to __builtin_shufflevector must be the same type
+    const vector_child_type = try t.vectorTypeInfo(a, "child");
+    const vector_len = try t.vectorTypeInfo(a, "len");
+    const shuffle_mask = blk: {
+        const mask_len = shufflevector.indexes.len;
+
+        const mask_type = try ZigTag.vector.create(t.arena, .{
+            .lhs = try t.createNumberNode(mask_len, .int),
+            .rhs = try ZigTag.type.create(t.arena, "i32"),
+        });
+
+        const init_list = try t.arena.alloc(ZigNode, mask_len);
+        for (init_list, shufflevector.indexes) |*init, index| {
+            const index_expr = try t.transExprCoercing(scope, index, .used);
+            const converted_index = try t.createHelperCallNode(.shuffleVectorIndex, &.{ index_expr, vector_len });
+            init.* = converted_index;
+        }
+
+        break :blk try ZigTag.array_init.create(t.arena, .{
+            .cond = mask_type,
+            .cases = init_list,
+        });
+    };
+
+    return ZigTag.shuffle.create(t.arena, .{
+        .element_type = vector_child_type,
+        .a = a,
+        .b = b,
+        .mask_vector = shuffle_mask,
+    });
+}
+
 // =====================
 // Node creation helpers
 // =====================
@@ -3450,6 +3559,14 @@ fn usizeCastForWrappingPtrArithmetic(t: *Translator, node: ZigNode) TransError!Z
         .lhs = try ZigTag.type.create(t.arena, "usize"),
         .rhs = try ZigTag.bit_cast.create(t.arena, intcast_node),
     });
+}
+
+/// @typeInfo(@TypeOf(vec_node)).vector.<field>
+fn vectorTypeInfo(t: *Translator, vec_node: ZigNode, field: []const u8) TransError!ZigNode {
+    const typeof_call = try ZigTag.typeof.create(t.arena, vec_node);
+    const typeinfo_call = try ZigTag.typeinfo.create(t.arena, typeof_call);
+    const vector_type_info = try ZigTag.field_access.create(t.arena, .{ .lhs = typeinfo_call, .field_name = "vector" });
+    return ZigTag.field_access.create(t.arena, .{ .lhs = vector_type_info, .field_name = field });
 }
 
 // =================
