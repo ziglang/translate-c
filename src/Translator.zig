@@ -3437,7 +3437,7 @@ fn transStringLiteralInitializer(
         const val = t.tree.value_map.get(expr).?;
         const bytes = t.comp.interner.get(val.ref()).bytes;
 
-        const init_list = try t.arena.alloc(ZigNode, num_inits);
+        const init_list = try t.arena.alloc(ZigNode, @intCast(num_inits));
         for (init_list, 0..) |*item, i| {
             const codepoint = switch (size) {
                 2 => @as(*const u16, @alignCast(@ptrCast(bytes.ptr + i * 2))).*,
