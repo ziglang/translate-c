@@ -72,6 +72,10 @@ pub inline fn exp(val: f64) f64 {
     return @exp(val);
 }
 
+pub inline fn expect(expr: anytype, _: anytype) @TypeOf(expr) {
+    return expr;
+}
+
 pub inline fn fabsf(val: f32) f32 {
     return @abs(val);
 }
@@ -279,10 +283,6 @@ pub inline fn strcmp(s1: [*c]const u8, s2: [*c]const u8) c_int {
 
 pub inline fn strlen(s: [*c]const u8) usize {
     return std.mem.sliceTo(s, 0).len;
-}
-
-pub inline fn expect(expr: anytype, _: anytype) @TypeOf(expr) {
-    return expr;
 }
 
 pub inline fn truncf(val: f32) f32 {
