@@ -63,6 +63,7 @@ pub const map = std.StaticStringMap(Builtin).initComptime([_]struct { []const u8
     .{ "__builtin_sqrt", .{ .name = "sqrt", .tag = .sqrt } },
     .{ "__builtin_strcmp", .{ .name = "strcmp" } },
     .{ "__builtin_strlen", .{ .name = "strlen" } },
+    .{ "__builtin_expect", .{ .name = "expect" } },
     .{ "__builtin_truncf", .{ .name = "truncf", .tag = .trunc } },
     .{ "__builtin_trunc", .{ .name = "trunc", .tag = .trunc } },
     .{ "__builtin_unreachable", .{ .name = "unreachable", .tag = .@"unreachable" } },

@@ -507,6 +507,36 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
                     .field = field.qt,
                 }, field_name);
             }
+
+            const field_alignment = if (has_alignment_attributes)
+                t.alignmentForField(record_ty, head_field_alignment, field_index)
+            else
+                null;
+
+            // Check if this is a flexible array member (last field with incomplete array type)
+            const is_last_field = field_index == record_ty.fields.len - 1;
+            if (is_last_field and container_kind == .@"struct") {
+                if (field.qt.get(t.comp, .array)) |array_ty| {
+                    if (array_ty.len == .incomplete or array_ty.len == .unspecified_variable or array_ty.len == .fixed and array_ty.len.fixed == 0) {
+                        const elem_type = t.transType(scope, array_ty.elem, field_loc) catch |err| switch (err) {
+                            error.UnsupportedType => {
+                                continue;
+                            },
+                            else => |e| return e,
+                        };
+                        const single_array = try ZigTag.array_type.create(t.arena, .{ .len = 1, .elem_type = elem_type });
+
+                        fields.appendAssumeCapacity(.{
+                            .name = field_name,
+                            .type = single_array,
+                            .alignment = field_alignment,
+                            .default_value = null,
+                        });
+                        continue;
+                    }
+                }
+            }
+
             const field_type = t.transType(scope, field.qt, field_loc) catch |err| switch (err) {
                 error.UnsupportedType => {
                     try t.opaque_demotes.put(t.gpa, base.qt, {});
@@ -518,11 +548,6 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
                 },
                 else => |e| return e,
             };
-
-            const field_alignment = if (has_alignment_attributes)
-                t.alignmentForField(record_ty, head_field_alignment, field_index)
-            else
-                null;
 
             // C99 introduced designated initializers for structs. Omitted fields are implicitly
             // initialized to zero. Some C APIs are designed with this in mind. Defaulting to zero
@@ -540,7 +565,6 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
-        // TODO check for flexible array.
         if (record_ty.fields.len == 0 and
             t.comp.target.os.tag == .windows and t.comp.target.abi == .msvc)
         {
@@ -2718,10 +2742,31 @@ fn transMemberAccess(
         .normal => base_node,
         .ptr => try ZigTag.deref.create(t.arena, base_node),
     };
-    return ZigTag.field_access.create(t.arena, .{
+    const field_access = try ZigTag.field_access.create(t.arena, .{
         .lhs = lhs,
         .field_name = field_name,
     });
+
+    // Flexible array members in C decay to pointers when accessed
+    const is_last_field = member_access.member_index == record.fields.len - 1;
+    if (is_last_field and base_info.base(t.comp).type == .@"struct") {
+        if (field.qt.get(t.comp, .array)) |array_ty| {
+            if (array_ty.len == .incomplete or array_ty.len == .unspecified_variable or (array_ty.len == .fixed and array_ty.len.fixed == 0)) {
+                // @as([*]T, @ptrCast(&field))
+                const addr = try ZigTag.address_of.create(t.arena, field_access);
+                const elem_type = try t.transType(scope, array_ty.elem, field.name_tok);
+                const ptr_type = try ZigTag.c_pointer.create(t.arena, .{
+                    .is_const = array_ty.elem.@"const" or (kind == .ptr and base_info.@"const"),
+                    .is_volatile = array_ty.elem.@"volatile",
+                    .elem_type = elem_type,
+                });
+                const ptr_cast = try ZigTag.ptr_cast.create(t.arena, addr);
+                return ZigTag.as.create(t.arena, .{ .lhs = ptr_type, .rhs = ptr_cast });
+            }
+        }
+    }
+
+    return field_access;
 }
 
 fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAccess) TransError!ZigNode {

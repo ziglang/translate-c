@@ -281,6 +281,10 @@ pub inline fn strlen(s: [*c]const u8) usize {
     return std.mem.sliceTo(s, 0).len;
 }
 
+pub inline fn expect(expr: anytype, _: anytype) @TypeOf(expr) {
+    return expr;
+}
+
 pub inline fn truncf(val: f32) f32 {
     return @trunc(val);
 }
