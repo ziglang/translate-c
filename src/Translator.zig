@@ -597,13 +597,15 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
 }
 
 fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!void {
-    const raw_qt = fn_decl_node.qt(t.tree);
-    const func_ty = raw_qt.get(t.comp, .func).?;
-    const name_tok: TokenIndex, const body_node: ?Node.Index, const is_export_or_inline = switch (fn_decl_node.get(t.tree)) {
-        .fn_def => |fn_def| .{ fn_def.name_tok, fn_def.body, fn_def.@"inline" or fn_def.static },
-        .fn_proto => |fn_proto| .{ fn_proto.name_tok, null, fn_proto.@"inline" or fn_proto.static },
+    const name_tok: TokenIndex, const body_node: ?Node.Index, const is_export_or_inline, const raw_qt = loop: switch (fn_decl_node.get(t.tree)) {
+        .fn_def => |fn_def| .{ fn_def.name_tok, fn_def.body, fn_def.@"inline" or fn_def.static, fn_def.qt },
+        .fn_proto => |fn_proto| {
+            if (fn_proto.definition) |some| continue :loop some.get(t.tree);
+            break :loop .{ fn_proto.name_tok, null, fn_proto.@"inline" or fn_proto.static, fn_proto.qt };
+        },
         else => unreachable,
     };
+    const func_ty = raw_qt.get(t.comp, .func).?;
 
     const is_pub = scope.id == .root;
 
@@ -1063,7 +1065,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         .func => |func_ty| return t.transFnType(scope, qt, func_ty, source_loc, .{}),
         .@"struct", .@"union" => |record_ty| {
             var trans_scope = scope;
-            if (record_ty.isAnonymous(t.comp)) {
+            if (!record_ty.isAnonymous(t.comp)) {
                 if (t.weak_global_names.contains(record_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }
             try t.transRecordDecl(trans_scope, qt);
@@ -1073,7 +1075,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         .@"enum" => |enum_ty| {
             var trans_scope = scope;
             const is_anonymous = enum_ty.isAnonymous(t.comp);
-            if (is_anonymous) {
+            if (!is_anonymous) {
                 if (t.weak_global_names.contains(enum_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }
             try t.transEnumDecl(trans_scope, qt);
@@ -2234,6 +2236,14 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) Trans
     const name = t.tree.tokSlice(decl_ref.name_tok);
     const maybe_alias = scope.getAlias(name);
     const mangled_name = maybe_alias orelse name;
+
+    switch (decl_ref.decl.get(t.tree)) {
+        .fn_proto, .fn_def => {
+            // Try translating the decl again in case of out of scope declaration.
+            try t.transFnDecl(scope, decl_ref.decl);
+        },
+        else => {},
+    }
 
     const decl = decl_ref.decl.get(t.tree);
     const ref_expr = blk: {
