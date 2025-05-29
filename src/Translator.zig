@@ -517,18 +517,18 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             const is_last_field = field_index == record_ty.fields.len - 1;
             if (is_last_field and container_kind == .@"struct") {
                 if (field.qt.get(t.comp, .array)) |array_ty| {
-                    if (array_ty.len == .incomplete or array_ty.len == .unspecified_variable or array_ty.len == .fixed and array_ty.len.fixed == 0) {
+                    if (array_ty.len == .incomplete or array_ty.len == .fixed and array_ty.len.fixed == 0) {
                         const elem_type = t.transType(scope, array_ty.elem, field_loc) catch |err| switch (err) {
                             error.UnsupportedType => {
                                 continue;
                             },
                             else => |e| return e,
                         };
-                        const single_array = try ZigTag.array_type.create(t.arena, .{ .len = 1, .elem_type = elem_type });
+                        const zero_array = try ZigTag.array_type.create(t.arena, .{ .len = 0, .elem_type = elem_type });
 
                         fields.appendAssumeCapacity(.{
                             .name = field_name,
-                            .type = single_array,
+                            .type = zero_array,
                             .alignment = field_alignment,
                             .default_value = null,
                         });
