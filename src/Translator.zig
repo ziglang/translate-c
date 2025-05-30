@@ -1471,6 +1471,13 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             try t.transVarDecl(scope, variable);
             return ZigTag.declaration.init();
         },
+        .switch_stmt => |switch_stmt| return t.transSwitch(scope, switch_stmt),
+        .case_stmt, .default_stmt => {
+            return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO complex switch", .{});
+        },
+        .goto_stmt, .computed_goto_stmt, .labeled_stmt => {
+            return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
+        },
         else => return t.transExprCoercing(scope, stmt, .unused),
     }
 }
@@ -1699,6 +1706,211 @@ fn transForStmt(t: *Translator, scope: *Scope, for_stmt: Node.ForStmt) TransErro
         return try bs.complete();
     } else {
         return while_node;
+    }
+}
+
+fn transSwitch(t: *Translator, scope: *Scope, switch_stmt: Node.SwitchStmt) TransError!ZigNode {
+    var loop_scope: Scope = .{
+        .parent = scope,
+        .id = .loop,
+    };
+
+    var block_scope = try Scope.Block.init(t, &loop_scope, false);
+    defer block_scope.deinit();
+
+    const base_scope = &block_scope.base;
+
+    var cond_scope: Scope.Condition = .{
+        .base = .{
+            .parent = base_scope,
+            .id = .condition,
+        },
+    };
+    defer cond_scope.deinit();
+    const switch_expr = try t.transExpr(&cond_scope.base, switch_stmt.cond, .used);
+
+    var cases = std.ArrayList(ZigNode).init(t.gpa);
+    defer cases.deinit();
+    var has_default = false;
+
+    const body_node = switch_stmt.body.get(t.tree);
+    if (body_node != .compound_stmt) {
+        return t.fail(error.UnsupportedTranslation, switch_stmt.switch_tok, "TODO complex switch", .{});
+    }
+    const body = body_node.compound_stmt.body;
+    // Iterate over switch body and collect all cases.
+    // Fallthrough is handled by duplicating statements.
+    for (body, 0..) |stmt, i| {
+        switch (stmt.get(t.tree)) {
+            .case_stmt => {
+                var items = std.ArrayList(ZigNode).init(t.gpa);
+                defer items.deinit();
+                const sub = try t.transCaseStmt(base_scope, stmt, &items);
+                const res = try t.transSwitchProngStmt(base_scope, sub, body[i..]);
+
+                if (items.items.len == 0) {
+                    has_default = true;
+                    const switch_else = try ZigTag.switch_else.create(t.arena, res);
+                    try cases.append(switch_else);
+                } else {
+                    const switch_prong = try ZigTag.switch_prong.create(t.arena, .{
+                        .cases = try t.arena.dupe(ZigNode, items.items),
+                        .cond = res,
+                    });
+                    try cases.append(switch_prong);
+                }
+            },
+            .default_stmt => |default_stmt| {
+                has_default = true;
+
+                var sub = default_stmt.body;
+                while (true) switch (sub.get(t.tree)) {
+                    .case_stmt => |sub_case| sub = sub_case.body,
+                    .default_stmt => |sub_default| sub = sub_default.body,
+                    else => break,
+                };
+
+                const res = try t.transSwitchProngStmt(base_scope, sub, body[i..]);
+
+                const switch_else = try ZigTag.switch_else.create(t.arena, res);
+                try cases.append(switch_else);
+            },
+            else => {}, // collected in transSwitchProngStmt
+        }
+    }
+
+    if (!has_default) {
+        const else_prong = try ZigTag.switch_else.create(t.arena, ZigTag.empty_block.init());
+        try cases.append(else_prong);
+    }
+
+    const switch_node = try ZigTag.@"switch".create(t.arena, .{
+        .cond = switch_expr,
+        .cases = try t.arena.dupe(ZigNode, cases.items),
+    });
+    try block_scope.statements.append(t.gpa, switch_node);
+    try block_scope.statements.append(t.gpa, ZigTag.@"break".init());
+    const while_body = try block_scope.complete();
+
+    return ZigTag.while_true.create(t.arena, while_body);
+}
+
+/// Collects all items for this case, returns the first statement after the labels.
+/// If items ends up empty, the prong should be translated as an else.
+fn transCaseStmt(
+    t: *Translator,
+    scope: *Scope,
+    stmt: Node.Index,
+    items: *std.ArrayList(ZigNode),
+) TransError!Node.Index {
+    var sub = stmt;
+    var seen_default = false;
+    while (true) {
+        switch (sub.get(t.tree)) {
+            .default_stmt => |default_stmt| {
+                seen_default = true;
+                items.items.len = 0;
+                sub = default_stmt.body;
+            },
+            .case_stmt => |case_stmt| {
+                if (seen_default) {
+                    items.items.len = 0;
+                    sub = case_stmt.body;
+                    continue;
+                }
+
+                const expr = if (case_stmt.end) |end| blk: {
+                    const start_node = try t.transExpr(scope, case_stmt.start, .used);
+                    const end_node = try t.transExpr(scope, end, .used);
+
+                    break :blk try ZigTag.ellipsis3.create(t.arena, .{ .lhs = start_node, .rhs = end_node });
+                } else try t.transExpr(scope, case_stmt.start, .used);
+
+                try items.append(expr);
+                sub = case_stmt.body;
+            },
+            else => return sub,
+        }
+    }
+}
+
+/// Collects all statements seen by this case into a block.
+/// Avoids creating a block if the first statement is a break or return.
+fn transSwitchProngStmt(
+    t: *Translator,
+    scope: *Scope,
+    stmt: Node.Index,
+    body: []const Node.Index,
+) TransError!ZigNode {
+    switch (stmt.get(t.tree)) {
+        .break_stmt => return ZigTag.@"break".init(),
+        .return_stmt => return t.transStmt(scope, stmt),
+        .case_stmt, .default_stmt => unreachable,
+        else => {
+            var block_scope = try Scope.Block.init(t, scope, false);
+            defer block_scope.deinit();
+
+            // we do not need to translate `stmt` since it is the first stmt of `body`
+            try t.transSwitchProngStmtInline(&block_scope, body);
+            return try block_scope.complete();
+        },
+    }
+}
+
+/// Collects all statements seen by this case into a block.
+fn transSwitchProngStmtInline(
+    t: *Translator,
+    block: *Scope.Block,
+    body: []const Node.Index,
+) TransError!void {
+    for (body) |stmt| {
+        switch (stmt.get(t.tree)) {
+            .return_stmt => {
+                const result = try t.transStmt(&block.base, stmt);
+                try block.statements.append(t.gpa, result);
+                return;
+            },
+            .break_stmt => {
+                try block.statements.append(t.gpa, ZigTag.@"break".init());
+                return;
+            },
+            .case_stmt => |case_stmt| {
+                var sub = case_stmt.body;
+                while (true) switch (sub.get(t.tree)) {
+                    .case_stmt => |sub_case| sub = sub_case.body,
+                    .default_stmt => |sub_default| sub = sub_default.body,
+                    else => break,
+                };
+                const result = try t.transStmt(&block.base, sub);
+                assert(result.tag() != .declaration);
+                try block.statements.append(t.gpa, result);
+                if (result.isNoreturn(true)) return;
+            },
+            .default_stmt => |default_stmt| {
+                var sub = default_stmt.body;
+                while (true) switch (sub.get(t.tree)) {
+                    .case_stmt => |sub_case| sub = sub_case.body,
+                    .default_stmt => |sub_default| sub = sub_default.body,
+                    else => break,
+                };
+                const result = try t.transStmt(&block.base, sub);
+                assert(result.tag() != .declaration);
+                try block.statements.append(t.gpa, result);
+                if (result.isNoreturn(true)) return;
+            },
+            .compound_stmt => |compound_stmt| {
+                const result = try t.transCompoundStmt(&block.base, compound_stmt);
+                try block.statements.append(t.gpa, result);
+                if (result.isNoreturn(true)) return;
+            },
+            else => {
+                const result = try t.transStmt(&block.base, stmt);
+                switch (result.tag()) {
+                    .declaration, .empty_block => {},
+                    else => try block.statements.append(t.gpa, result),
+                }
+            },
+        }
     }
 }
 

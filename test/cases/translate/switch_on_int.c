@@ -30,7 +30,6 @@ void switch_fn(int i) {
 }
 
 // translate
-// expect=fail
 //
 // pub export fn switch_fn(arg_i: c_int) void {
 //     var i = arg_i;

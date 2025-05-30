@@ -10,9 +10,8 @@ int main() {
 }
 
 // translate
-// expect=fail
 //
-// source.h:5:13: warning: TODO complex switch
+// :5:13: warning: TODO complex switch
 //
-// source.h:1:5: warning: unable to translate function, demoted to extern
+// :1:5: warning: unable to translate function, demoted to extern
 // pub extern fn main() c_int;
