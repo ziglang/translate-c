@@ -15,4 +15,3 @@ int main(void) {
 }
 
 // run
-// expect=fail
