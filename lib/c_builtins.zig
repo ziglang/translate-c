@@ -72,6 +72,10 @@ pub inline fn exp(val: f64) f64 {
     return @exp(val);
 }
 
+pub inline fn expect(expr: anytype, _: anytype) @TypeOf(expr) {
+    return expr;
+}
+
 pub inline fn fabsf(val: f32) f32 {
     return @abs(val);
 }

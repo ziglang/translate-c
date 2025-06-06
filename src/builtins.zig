@@ -28,6 +28,7 @@ pub const map = std.StaticStringMap(Builtin).initComptime([_]struct { []const u8
     .{ "__builtin_exp2", .{ .name = "exp2", .tag = .exp2 } },
     .{ "__builtin_expf", .{ .name = "expf", .tag = .exp } },
     .{ "__builtin_exp", .{ .name = "exp", .tag = .exp } },
+    .{ "__builtin_expect", .{ .name = "expect" } },
     .{ "__builtin_fabsf", .{ .name = "fabsf", .tag = .abs } },
     .{ "__builtin_fabs", .{ .name = "fabs", .tag = .abs } },
     .{ "__builtin_floorf", .{ .name = "floorf", .tag = .floor } },
