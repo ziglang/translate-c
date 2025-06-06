@@ -354,17 +354,6 @@ fn contains(scope: *Scope, name: []const u8) bool {
     };
 }
 
-fn getBreakableScope(inner: *Scope) *Scope {
-    var scope = inner;
-    while (true) {
-        switch (scope.id) {
-            .root => unreachable,
-            .loop, .do_loop => return scope,
-            else => scope = scope.parent.?,
-        }
-    }
-}
-
 /// Appends a node to the first block scope if inside a function, or to the root tree if not.
 pub fn appendNode(inner: *Scope, node: ast.Node) !void {
     var scope = inner;

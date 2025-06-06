@@ -257,10 +257,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
                 t.weak_global_names.putAssumeCapacity(prefixed_name, {});
             },
 
-            .fn_proto,
-            .fn_def,
-            .variable,
-            => {
+            .function, .variable => {
                 const decl_name = t.tree.tokSlice(decl.tok(t.tree));
                 try t.global_names.put(t.gpa, decl_name, {});
             },
@@ -326,11 +323,15 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
         .enum_forward_decl,
         => return,
 
-        .fn_proto, .fn_def => {
-            try t.transFnDecl(scope, decl);
+        .function => |function| {
+            if (function.definition) |definition| {
+                return t.transFnDecl(scope, definition.get(t.tree).function);
+            }
+            try t.transFnDecl(scope, function);
         },
 
         .variable => |variable| {
+            if (variable.definition != null) return;
             try t.transVarDecl(scope, variable);
         },
         .static_assert => |static_assert| {
@@ -596,33 +597,25 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
     }
 }
 
-fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!void {
-    const raw_qt = fn_decl_node.qt(t.tree);
-    const func_ty = raw_qt.get(t.comp, .func).?;
-    const name_tok: TokenIndex, const body_node: ?Node.Index, const is_export_or_inline = switch (fn_decl_node.get(t.tree)) {
-        .fn_def => |fn_def| .{ fn_def.name_tok, fn_def.body, fn_def.@"inline" or fn_def.static },
-        .fn_proto => |fn_proto| .{ fn_proto.name_tok, null, fn_proto.@"inline" or fn_proto.static },
-        else => unreachable,
-    };
+fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!void {
+    const func_ty = function.qt.get(t.comp, .func).?;
 
     const is_pub = scope.id == .root;
 
-    // TODO if this is a prototype for which a definition exists,
-    // that definition should be translated instead.
-    const fn_name = t.tree.tokSlice(name_tok);
-    if (t.global_scope.sym_table.contains(fn_name))
+    const fn_name = t.tree.tokSlice(function.name_tok);
+    if (scope.getAlias(fn_name) != null or t.global_scope.containsNow(fn_name))
         return; // Avoid processing this decl twice
 
-    const fn_decl_loc = name_tok;
-    const has_body = body_node != null;
-    const is_always_inline = has_body and raw_qt.getAttribute(t.comp, .always_inline) != null;
+    const fn_decl_loc = function.name_tok;
+    const has_body = function.body != null;
+    const is_always_inline = has_body and function.qt.getAttribute(t.comp, .always_inline) != null;
     const proto_ctx: FnProtoContext = .{
         .fn_name = fn_name,
         .is_always_inline = is_always_inline,
         .is_extern = !has_body,
-        .is_export = !is_export_or_inline and has_body and !is_always_inline,
+        .is_export = !function.static and has_body and !is_always_inline,
         .is_pub = is_pub,
-        .cc = if (raw_qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
+        .cc = if (function.qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
             .c => .c,
             .stdcall => .x86_stdcall,
             .thiscall => .x86_thiscall,
@@ -643,7 +636,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
         } else .c,
     };
 
-    const proto_node = t.transFnType(&t.global_scope.base, raw_qt, func_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
+    const proto_node = t.transFnType(&t.global_scope.base, function.qt, func_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
         error.UnsupportedType => {
             return t.failDecl(fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
         },
@@ -665,7 +658,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, fn_decl_node: Node.Index) Error!vo
     }
 
     // actual function definition with body
-    const body_stmt = body_node.?.get(t.tree).compound_stmt;
+    const body_stmt = function.body.?.get(t.tree).compound_stmt;
     var block_scope = try Scope.Block.init(t, &t.global_scope.base, false);
     block_scope.return_type = func_ty.return_type;
     defer block_scope.deinit();
@@ -1063,7 +1056,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         .func => |func_ty| return t.transFnType(scope, qt, func_ty, source_loc, .{}),
         .@"struct", .@"union" => |record_ty| {
             var trans_scope = scope;
-            if (record_ty.isAnonymous(t.comp)) {
+            if (!record_ty.isAnonymous(t.comp)) {
                 if (t.weak_global_names.contains(record_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }
             try t.transRecordDecl(trans_scope, qt);
@@ -1073,7 +1066,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         .@"enum" => |enum_ty| {
             var trans_scope = scope;
             const is_anonymous = enum_ty.isAnonymous(t.comp);
-            if (is_anonymous) {
+            if (!is_anonymous) {
                 if (t.weak_global_names.contains(enum_ty.name.lookup(t.comp))) trans_scope = &t.global_scope.base;
             }
             try t.transEnumDecl(trans_scope, qt);
@@ -1463,8 +1456,8 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             try t.transEnumDecl(scope, enum_decl.container_qt);
             return ZigTag.declaration.init();
         },
-        .fn_proto => {
-            try t.transFnDecl(scope, stmt);
+        .function => |function| {
+            try t.transFnDecl(scope, function);
             return ZigTag.declaration.init();
         },
         .variable => |variable| {
@@ -2142,8 +2135,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .struct_decl,
         .union_decl,
         .enum_decl,
-        .fn_proto,
-        .fn_def,
+        .function,
         .param,
         .variable,
         .enum_field,
@@ -2459,6 +2451,14 @@ fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) Trans
     const name = t.tree.tokSlice(decl_ref.name_tok);
     const maybe_alias = scope.getAlias(name);
     const mangled_name = maybe_alias orelse name;
+
+    switch (decl_ref.decl.get(t.tree)) {
+        .function => |function| if (function.definition == null and function.body == null) {
+            // Try translating the decl again in case of out of scope declaration.
+            try t.transFnDecl(scope, function);
+        },
+        else => {},
+    }
 
     const decl = decl_ref.decl.get(t.tree);
     const ref_expr = blk: {

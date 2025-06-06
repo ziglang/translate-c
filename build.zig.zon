@@ -9,8 +9,8 @@
 
     .dependencies = .{
         .aro = .{
-            .url = "git+https://github.com/Vexu/arocc#7339f1b1f1450a769be2aaa2ff9d2a17a728f135",
-            .hash = "aro-0.0.0-JSD1QuDvJgCJvnTchDBa0PfUxTlY9iYNeCxrpK6nAfna",
+            .url = "git+https://github.com/Vexu/arocc#1c0a5733ec4962a8559ca981213c8f1dc2b23a15",
+            .hash = "aro-0.0.0-JSD1QpUCJwDojnxIuz2DILgM8e5YFO4G_hDihrst3gqm",
         },
 
         // .example_compile_c = .{
