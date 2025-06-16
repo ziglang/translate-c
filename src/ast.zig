@@ -696,6 +696,7 @@ pub const Payload = struct {
             elem_type: Node,
             is_const: bool,
             is_volatile: bool,
+            is_allowzero: bool,
         },
     };
 
@@ -1591,6 +1592,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             };
             if (payload.is_const) _ = try c.addToken(.keyword_const, "const");
             if (payload.is_volatile) _ = try c.addToken(.keyword_volatile, "volatile");
+            if (payload.is_allowzero) _ = try c.addToken(.keyword_allowzero, "allowzero");
             const elem_type = try renderNodeGrouped(c, payload.elem_type);
 
             return c.addNode(.{

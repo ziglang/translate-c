@@ -1076,6 +1076,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
                 .is_const = is_const,
                 .is_volatile = is_volatile,
                 .elem_type = elem_type,
+                .is_allowzero = false,
             };
             if (is_fn_proto or
                 t.typeIsOpaque(child_qt) or
@@ -1092,7 +1093,12 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             switch (array_ty.len) {
                 .incomplete, .unspecified_variable => {
                     const elem_type = try t.transType(scope, elem_qt, source_loc);
-                    return ZigTag.c_pointer.create(t.arena, .{ .is_const = elem_qt.@"const", .is_volatile = elem_qt.@"volatile", .elem_type = elem_type });
+                    return ZigTag.c_pointer.create(t.arena, .{
+                        .is_const = elem_qt.@"const",
+                        .is_volatile = elem_qt.@"volatile",
+                        .is_allowzero = false,
+                        .elem_type = elem_type,
+                    });
                 },
                 .fixed, .static => |len| {
                     const elem_type = try t.transType(scope, elem_qt, source_loc);
@@ -2075,9 +2081,9 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .shl_expr => |shl_expr| try t.transShiftExpr(scope, shl_expr, .shl),
         .shr_expr => |shr_expr| try t.transShiftExpr(scope, shr_expr, .shr),
 
-        .member_access_expr => |member_access| try t.transMemberAccess(scope, .normal, member_access),
-        .member_access_ptr_expr => |member_access| try t.transMemberAccess(scope, .ptr, member_access),
-        .array_access_expr => |array_access| try t.transArrayAccess(scope, array_access),
+        .member_access_expr => |member_access| try t.transMemberAccess(scope, .normal, member_access, null),
+        .member_access_ptr_expr => |member_access| try t.transMemberAccess(scope, .ptr, member_access, null),
+        .array_access_expr => |array_access| try t.transArrayAccess(scope, array_access, null),
 
         .builtin_ref => unreachable,
         .builtin_call_expr => |call| return t.transBuiltinCall(scope, call, used),
@@ -2975,6 +2981,7 @@ fn transMemberAccess(
     scope: *Scope,
     kind: enum { normal, ptr },
     member_access: Node.MemberAccess,
+    opt_base: ?ZigNode,
 ) TransError!ZigNode {
     const base_info = switch (kind) {
         .normal => member_access.base.qt(t.tree),
@@ -2986,7 +2993,7 @@ fn transMemberAccess(
         .parent = base_info.base(t.comp).qt,
         .field = field.qt,
     }).? else field.name.lookup(t.comp);
-    const base_node = try t.transExpr(scope, member_access.base, .used);
+    const base_node = opt_base orelse try t.transExpr(scope, member_access.base, .used);
     const lhs = switch (kind) {
         .normal => base_node,
         .ptr => try ZigTag.deref.create(t.arena, base_node),
@@ -3008,7 +3015,7 @@ fn transMemberAccess(
     return field_access;
 }
 
-fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAccess) TransError!ZigNode {
+fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAccess, opt_base: ?ZigNode) TransError!ZigNode {
     // Unwrap the base statement if it's an array decayed to a bare pointer type
     // so that we index the array itself
     const base = base: {
@@ -3018,7 +3025,7 @@ fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAcces
         break :base base.cast.operand;
     };
 
-    const base_node = try t.transExpr(scope, base, .used);
+    const base_node = opt_base orelse try t.transExpr(scope, base, .used);
     const index = index: {
         const index = try t.transExpr(scope, array_access.index, .used);
         const index_qt = array_access.index.qt(t.tree);
@@ -3062,6 +3069,43 @@ fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAcces
     });
 }
 
+fn transOffsetof(t: *Translator, scope: *Scope, arg: Node.Index) TransError!ZigNode {
+    // Translate __builtin_offsetof(T, designator) as
+    // @intFromPtr(&(@as(*allowzero T, @ptrFromInt(0)).designator))
+    const member = try t.transMemberDesignator(scope, arg);
+    const address = try ZigTag.address_of.create(t.arena, member);
+    return ZigTag.int_from_ptr.create(t.arena, address);
+}
+
+fn transMemberDesignator(t: *Translator, scope: *Scope, arg: Node.Index) TransError!ZigNode {
+    switch (arg.get(t.tree)) {
+        .default_init_expr => |default| {
+            const elem_node = try t.transType(scope, default.qt, default.last_tok);
+            const ptr_ty = try ZigTag.single_pointer.create(t.arena, .{
+                .elem_type = elem_node,
+                .is_allowzero = true,
+                .is_const = false,
+                .is_volatile = false,
+            });
+            const zero = try ZigTag.ptr_from_int.create(t.arena, ZigTag.zero_literal.init());
+            return ZigTag.as.create(t.arena, .{ .lhs = ptr_ty, .rhs = zero });
+        },
+        .array_access_expr => |access| {
+            const base = try t.transMemberDesignator(scope, access.base);
+            return t.transArrayAccess(scope, access, base);
+        },
+        .member_access_expr => |access| {
+            const base = try t.transMemberDesignator(scope, access.base);
+            return t.transMemberAccess(scope, .normal, access, base);
+        },
+        .cast => |cast| {
+            assert(cast.kind == .array_to_pointer);
+            return t.transMemberDesignator(scope, cast.operand);
+        },
+        else => unreachable,
+    }
+}
+
 fn transBuiltinCall(
     t: *Translator,
     scope: *Scope,
@@ -3069,6 +3113,11 @@ fn transBuiltinCall(
     used: ResultUsed,
 ) TransError!ZigNode {
     const builtin_name = t.tree.tokSlice(call.builtin_tok);
+    if (std.mem.eql(u8, builtin_name, "__builtin_offsetof")) {
+        const res = try t.transOffsetof(scope, call.args[0]);
+        return t.maybeSuppressResult(used, res);
+    }
+
     const builtin = builtins.map.get(builtin_name) orelse
         return t.fail(error.UnsupportedTranslation, call.builtin_tok, "TODO implement function '{s}' in std.zig.c_builtins", .{builtin_name});
 

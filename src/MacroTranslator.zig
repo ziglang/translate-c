@@ -1068,6 +1068,7 @@ fn parseCAbstractDeclarator(mt: *MacroTranslator, node: ZigNode) ParseError!ZigN
                 const ptr = try ZigTag.single_pointer.create(mt.t.arena, .{
                     .is_const = false,
                     .is_volatile = false,
+                    .is_allowzero = false,
                     .elem_type = node,
                 });
                 return ZigTag.optional_type.create(mt.t.arena, ptr);
@@ -1076,6 +1077,7 @@ fn parseCAbstractDeclarator(mt: *MacroTranslator, node: ZigNode) ParseError!ZigN
         return ZigTag.c_pointer.create(mt.t.arena, .{
             .is_const = false,
             .is_volatile = false,
+            .is_allowzero = false,
             .elem_type = node,
         });
     }
