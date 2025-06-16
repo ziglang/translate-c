@@ -1,0 +1,12 @@
+.{
+    .name = .examples,
+    .version = "0.0.0",
+    .fingerprint = 0x7bd0ad45e4b4e146,
+    .minimum_zig_version = "0.15.0-dev.460+f4e9846bc",
+    .paths = .{""},
+    .dependencies = .{
+        .compile_c = .{ .path = "compile_c" },
+        .import_header = .{ .path = "import_header" },
+        .use_static_lib = .{ .path = "use_static_lib" },
+    },
+}

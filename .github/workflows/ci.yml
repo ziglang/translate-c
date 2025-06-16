@@ -26,20 +26,30 @@ jobs:
         with:
           version: master
 
-      - name: Build
+      - name: Build Debug
         run: zig build
 
-      - name: Build 32-bit
-        run: zig build -Dtarget=arm-linux
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe
 
-      - name: Build release
-        run: zig build --release=safe
+      - name: Build 32-bit
+        if: matrix.os == 'ubuntu-latest'
+        run: zig build -Dtarget=arm-linux
 
       - name: Run Tests
-        run: zig build test
+        run: |
+          zig build test -Doptimize=Debug
+          zig build test -Doptimize=ReleaseFast
+          zig build test -Doptimize=ReleaseSafe
+          zig build test -Doptimize=ReleaseSmall
 
       - name: Run Tests MSVC
-        run: zig build test -Dtarget=native-windows-msvc
         if: matrix.os == 'windows-latest'
+        run: |
+          zig build test -Dtarget=native-windows-msvc -Doptimize=Debug
+          zig build test -Dtarget=native-windows-msvc -Doptimize=ReleaseFast
+          zig build test -Dtarget=native-windows-msvc -Doptimize=ReleaseSafe
+          zig build test -Dtarget=native-windows-msvc -Doptimize=ReleaseSmall
 
+      - name: Run Examples
+        run: zig build all --build-file examples/build.zig

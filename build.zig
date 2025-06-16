@@ -1,16 +1,8 @@
-const std = @import("std");
-
-pub const TranslateC = @import("build/TranslateC.zig");
-
-pub fn build(b: *std.Build) !void {
+pub const Translator = @import("build/Translator.zig");
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const skip_debug = b.option(bool, "skip-debug", "Main test suite skips debug builds") orelse false;
-    const skip_release = b.option(bool, "skip-release", "Main test suite skips release builds") orelse false;
-    const skip_release_small = b.option(bool, "skip-release-small", "Main test suite skips release-small builds") orelse skip_release;
-    const skip_release_fast = b.option(bool, "skip-release-fast", "Main test suite skips release-fast builds") orelse skip_release;
-    const skip_release_safe = b.option(bool, "skip-release-safe", "Main test suite skips release-safe builds") orelse skip_release;
     const skip_translate = b.option(bool, "skip-translate", "Main test suite skips translate tests") orelse false;
     const skip_run_translated = b.option(bool, "skip-run-translated", "Main test suite skips run-translated tests") orelse false;
     const use_llvm = b.option(bool, "llvm", "Use LLVM backend to generate aro executable");
@@ -32,177 +24,105 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{
-                .name = "c_builtins",
-                .module = c_builtins,
-            },
-            .{
-                .name = "helpers",
-                .module = helpers,
-            },
-        },
     });
+    translate_c_module.addImport("aro", aro.module("aro"));
+    translate_c_module.addImport("helpers", helpers);
+    translate_c_module.addImport("c_builtins", c_builtins);
 
-    const exe = b.addExecutable(.{
+    const translate_c_exe = b.addExecutable(.{
         .name = "translate-c",
         .root_module = translate_c_module,
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
-    exe.root_module.addImport("aro", aro.module("aro"));
+
     b.installDirectory(.{
         .source_dir = aro.path("include"),
         .install_dir = .prefix,
         .install_subdir = "include",
     });
-    b.installArtifact(exe);
+    b.installArtifact(translate_c_exe);
 
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-    const run_step = b.step("run", "Run translate-c");
-    run_step.dependOn(&run_cmd.step);
+    // Re-expose the path to Aro's "resource directory" (which is actually just the repo root). This
+    // is needed to correctly discover its builtin 'include' directory when `translate-c` is invoked
+    // programmatically.
+    b.addNamedLazyPath("aro_resource_dir", aro.path(""));
 
-    const optimization_modes: []const std.builtin.OptimizeMode = modes: {
-        var chosen_opt_modes_buf: [4]std.builtin.OptimizeMode = undefined;
-        var chosen_mode_index: usize = 0;
-        if (!skip_debug) {
-            chosen_opt_modes_buf[chosen_mode_index] = .Debug;
-            chosen_mode_index += 1;
-        }
-        if (!skip_release_safe) {
-            chosen_opt_modes_buf[chosen_mode_index] = .ReleaseSafe;
-            chosen_mode_index += 1;
-        }
-        if (!skip_release_fast) {
-            chosen_opt_modes_buf[chosen_mode_index] = .ReleaseFast;
-            chosen_mode_index += 1;
-        }
-        if (!skip_release_small) {
-            chosen_opt_modes_buf[chosen_mode_index] = .ReleaseSmall;
-            chosen_mode_index += 1;
-        }
-        break :modes chosen_opt_modes_buf[0..chosen_mode_index];
+    const translator_conf: Translator.TranslateCConfig = .{
+        .exe = translate_c_exe,
+        .aro_resource_dir = aro.path(""),
+        .c_builtins = c_builtins,
+        .helpers = helpers,
     };
 
-    const test_step = b.step("test", "Run all tests");
+    const run_step = b.step("run", "Run translate-c");
+    run_step.dependOn(step: {
+        const run_cmd = b.addRunArtifact(translate_c_exe);
+        run_cmd.step.dependOn(b.getInstallStep());
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
+        break :step &run_cmd.step;
+    });
 
     const fmt_dirs: []const []const u8 = &.{ "build", "src", "test" };
-    b.step("fmt", "Modify source files in place to have conforming formatting")
-        .dependOn(&b.addFmt(.{ .paths = fmt_dirs }).step);
 
-    const test_fmt = b.step("test-fmt", "Check source files having conforming formatting");
-    test_fmt.dependOn(&b.addFmt(.{ .paths = fmt_dirs, .check = true }).step);
-    test_step.dependOn(test_fmt);
+    const fmt_step = b.step("fmt", "Modify source files in place to have conforming formatting");
+    fmt_step.dependOn(&b.addFmt(.{ .paths = fmt_dirs }).step);
 
-    {
-        const unit_test_step = b.step("test-unit", "Run unit tests");
-        for (optimization_modes) |mode| {
-            const unit_tests = b.addTest(.{
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = mode,
-            });
-            unit_tests.root_module.addImport("aro", aro.module("aro"));
-            unit_tests.root_module.addImport("helpers", helpers);
-            unit_tests.root_module.addImport("c_builtins", c_builtins);
-            const run_unit_tests = b.addRunArtifact(unit_tests);
-            unit_test_step.dependOn(&run_unit_tests.step);
-        }
-        test_step.dependOn(unit_test_step);
-    }
+    const test_fmt_step = b.step("test-fmt", "Check source files having conforming formatting");
+    test_fmt_step.dependOn(&b.addFmt(.{ .paths = fmt_dirs, .check = true }).step);
 
-    const translate_exes = blk: {
-        // Use symlink to get the include dir in the exe path without installing both.
-        const aro_include = aro.path("include").getPath3(b, null);
-        const resolved_aro_include = b.pathResolve(&.{ aro_include.root_dir.path orelse ".", aro_include.sub_path });
+    const test_unit_step = b.step("test-unit", "Run unit tests");
+    test_unit_step.dependOn(step: {
+        const unit_tests_mod = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        unit_tests_mod.addImport("aro", aro.module("aro"));
+        unit_tests_mod.addImport("helpers", helpers);
+        unit_tests_mod.addImport("c_builtins", c_builtins);
+        break :step &b.addRunArtifact(b.addTest(.{ .root_module = unit_tests_mod })).step;
+    });
 
-        const dest_dir = b.cache_root.join(b.allocator, &.{"include"}) catch @panic("oom");
-        std.fs.symLinkAbsolute(resolved_aro_include, dest_dir, .{ .is_directory = true }) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => @panic("failed to symlink"),
-        };
+    const test_macros_step = b.step("test-macros", "Run macro tests");
+    test_macros_step.dependOn(step: {
+        const macro_tests_mod = b.createModule(.{
+            .root_source_file = b.path("test/macros.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        macro_tests_mod.addImport("macros.h", Translator.initInner(b, translator_conf, .{
+            .c_source_file = b.path("test/macros.h"),
+            .target = target,
+            .optimize = optimize,
+        }).mod);
+        macro_tests_mod.addImport("macros_not_utf8.h", Translator.initInner(b, translator_conf, .{
+            .c_source_file = b.path("test/macros_not_utf8.h"),
+            .target = target,
+            .optimize = optimize,
+        }).mod);
+        break :step &b.addRunArtifact(b.addTest(.{ .root_module = macro_tests_mod })).step;
+    });
 
-        var exes: [4]*std.Build.Step.Compile = undefined;
-        for (optimization_modes, 0..) |mode, i| {
-            const test_aro = b.dependency("aro", .{
-                .target = target,
-                .optimize = mode,
-            });
-            const test_exe = b.addExecutable(.{
-                .name = "translate-c",
-                .root_source_file = b.path("src/main.zig"),
-                .target = target,
-                .optimize = mode,
-                .use_llvm = use_llvm,
-                .use_lld = use_llvm,
-            });
-            test_exe.root_module.addImport("aro", test_aro.module("aro"));
-            test_exe.root_module.addImport("helpers", helpers);
-            test_exe.root_module.addImport("c_builtins", c_builtins);
-
-            // Ensure that a binary is emitted.
-            _ = test_exe.getEmittedBin();
-            exes[i] = test_exe;
-        }
-        break :blk exes[0..optimization_modes.len];
-    };
-
-    {
-        const macro_test_step = b.step("test-macros", "Run unit tests");
-        for (optimization_modes, translate_exes) |mode, translate_exe| {
-            const macro_tests = b.addTest(.{
-                .root_source_file = b.path("test/macros.zig"),
-                .target = target,
-                .optimize = mode,
-            });
-            macro_tests.root_module.addImport("macros.h", TranslateC.create(b, .{
-                .root_source_file = b.path("test/macros.h"),
-                .target = target,
-                .optimize = mode,
-                .translate_c_exe = translate_exe,
-                .builtins_module = c_builtins,
-                .helpers_module = helpers,
-            }).createModule());
-            macro_tests.root_module.addImport("macros_not_utf8.h", TranslateC.create(b, .{
-                .root_source_file = b.path("test/macros_not_utf8.h"),
-                .target = target,
-                .optimize = mode,
-                .translate_c_exe = translate_exe,
-                .builtins_module = c_builtins,
-                .helpers_module = helpers,
-            }).createModule());
-
-            const run_macro_tests = b.addRunArtifact(macro_tests);
-            macro_test_step.dependOn(&run_macro_tests.step);
-            macro_test_step.dependOn(&translate_exe.step);
-        }
-        test_step.dependOn(macro_test_step);
-    }
-
-    {
-        const example_test_step = b.step("test-examples", "Test examples");
-
-        // const compile_c = b.dependency("examples_compile_c", .{});
-        // example_test_step.dependOn(compile_c.builder.default_step);
-
-        // const import_header = b.dependency("examples_import_header", .{});
-        // example_test_step.dependOn(import_header.builder.default_step);
-
-        test_step.dependOn(example_test_step);
-    }
-
-    try @import("test/cases.zig").addCaseTests(
+    const test_translate_step = b.step("test-translate", "Run the C translation tests");
+    const test_run_translated_step = b.step("test-run-translated", "Run the run-translated-c tests");
+    @import("test/cases.zig").lowerCases(
         b,
-        test_step,
-        translate_exes,
-        c_builtins,
-        helpers,
+        translator_conf,
         target,
-        skip_translate,
-        skip_run_translated,
+        optimize,
+        test_translate_step,
+        test_run_translated_step,
     );
+
+    const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(test_fmt_step);
+    test_step.dependOn(test_unit_step);
+    test_step.dependOn(test_macros_step);
+    if (!skip_translate) test_step.dependOn(test_translate_step);
+    if (!skip_run_translated) test_step.dependOn(test_run_translated_step);
 }
+
+const std = @import("std");
