@@ -2242,6 +2242,10 @@ fn renderContainer(c: *Context, node: Node) !NodeIndex {
     for (members[payload.fields.len..], payload.decls) |*member, decl| {
         member.* = try renderNode(c, decl);
     }
+    const trailing = switch (c.tokens.items(.tag)[c.tokens.len - 1]) {
+        .comma, .semicolon => true,
+        else => false,
+    };
     _ = try c.addToken(.r_brace, "}");
 
     if (total_members == 0) {
@@ -2254,7 +2258,7 @@ fn renderContainer(c: *Context, node: Node) !NodeIndex {
         });
     } else if (total_members <= 2) {
         return c.addNode(.{
-            .tag = .container_decl_two_trailing,
+            .tag = if (trailing) .container_decl_two_trailing else .container_decl_two,
             .main_token = kind_tok,
             .data = .{ .opt_node_and_opt_node = .{
                 if (members.len >= 1) members[0].toOptional() else .none,
@@ -2264,7 +2268,7 @@ fn renderContainer(c: *Context, node: Node) !NodeIndex {
     } else {
         const span = try c.listToSpan(members);
         return c.addNode(.{
-            .tag = .container_decl_trailing,
+            .tag = if (trailing) .container_decl_trailing else .container_decl,
             .main_token = kind_tok,
             .data = .{ .extra_range = span },
         });
