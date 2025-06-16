@@ -55,7 +55,7 @@ fn expect(mt: *MacroTranslator, expected_id: CToken.Id) ParseError!void {
 }
 
 fn fail(mt: *MacroTranslator, comptime fmt: []const u8, args: anytype) !void {
-    return mt.t.failDeclExtra(mt.macro.loc, mt.name, fmt, args);
+    return mt.t.failDeclExtra(&mt.t.global_scope.base, mt.macro.loc, mt.name, fmt, args);
 }
 
 fn tokSlice(mt: *const MacroTranslator) []const u8 {
