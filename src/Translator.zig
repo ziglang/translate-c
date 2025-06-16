@@ -489,7 +489,6 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, record_ty.fields.len);
         defer fields.deinit();
 
-        // TODO: Add support for flexible array field functions
         var functions = std.ArrayList(ZigNode).init(t.gpa);
         defer functions.deinit();
 
@@ -539,40 +538,39 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             else
                 null;
 
-            // Check if this is a flexible array member (last field with incomplete array type)
-            const is_last_field = field_index == record_ty.fields.len - 1;
-            if (is_last_field and container_kind == .@"struct") {
-                if (field.qt.get(t.comp, .array)) |array_ty| {
-                    if (array_ty.len == .incomplete or array_ty.len == .fixed and array_ty.len.fixed == 0) {
-                        const elem_type = t.transType(scope, array_ty.elem, field_loc) catch |err| switch (err) {
-                            error.UnsupportedType => {
-                                continue;
-                            },
-                            else => |e| return e,
-                        };
-                        const zero_array = try ZigTag.array_type.create(t.arena, .{ .len = 0, .elem_type = elem_type });
+            const field_type = field_type: {
+                // Check if this is a flexible array member.
+                flexible: {
+                    if (field_index != record_ty.fields.len - 1 and container_kind != .@"union") break :flexible;
+                    const array_ty = field.qt.get(t.comp, .array) orelse break :flexible;
+                    if (array_ty.len != .incomplete and (array_ty.len != .fixed or array_ty.len.fixed != 0)) break :flexible;
 
-                        fields.appendAssumeCapacity(.{
-                            .name = field_name,
-                            .type = zero_array,
-                            .alignment = field_alignment,
-                            .default_value = null,
-                        });
-                        continue;
-                    }
+                    const elem_type = t.transType(scope, array_ty.elem, field_loc) catch |err| switch (err) {
+                        error.UnsupportedType => break :flexible,
+                        else => |e| return e,
+                    };
+                    const zero_array = try ZigTag.array_type.create(t.arena, .{ .len = 0, .elem_type = elem_type });
+
+                    const member_name = field_name;
+                    field_name = try std.fmt.allocPrint(t.arena, "_{s}", .{field_name});
+
+                    const member = try t.createFlexibleMemberFn(member_name, field_name);
+                    try functions.append(member);
+
+                    break :field_type zero_array;
                 }
-            }
 
-            const field_type = t.transType(scope, field.qt, field_loc) catch |err| switch (err) {
-                error.UnsupportedType => {
-                    try t.opaque_demotes.put(t.gpa, base.qt, {});
-                    try t.warn(scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
-                        container_kind_name,
-                        field_name,
-                    });
-                    break :init ZigTag.opaque_literal.init();
-                },
-                else => |e| return e,
+                break :field_type t.transType(scope, field.qt, field_loc) catch |err| switch (err) {
+                    error.UnsupportedType => {
+                        try t.opaque_demotes.put(t.gpa, base.qt, {});
+                        try t.warn(scope, field.name_tok, "{s} demoted to opaque type - unable to translate type of field {s}", .{
+                            container_kind_name,
+                            field_name,
+                        });
+                        break :init ZigTag.opaque_literal.init();
+                    },
+                    else => |e| return e,
+                };
             };
 
             // C99 introduced designated initializers for structs. Omitted fields are implicitly
@@ -591,7 +589,8 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             });
         }
 
-        if (record_ty.fields.len == 0 and
+        // A record is empty if it has no fields or only flexible array fields.
+        if (record_ty.fields.len == functions.items.len and
             t.comp.target.os.tag == .windows and t.comp.target.abi == .msvc)
         {
             // In MSVC empty records have the same size as their alignment.
@@ -2997,21 +2996,11 @@ fn transMemberAccess(
         .field_name = field_name,
     });
 
-    // Flexible array members in C decay to pointers when accessed
-    const is_last_field = member_access.member_index == record.fields.len - 1;
-    if (is_last_field and base_info.base(t.comp).type == .@"struct") {
+    // Flexible array members are translated as member functions.
+    if (member_access.member_index == record.fields.len - 1 or base_info.base(t.comp).type == .@"union") {
         if (field.qt.get(t.comp, .array)) |array_ty| {
-            if (array_ty.len == .incomplete or array_ty.len == .unspecified_variable or (array_ty.len == .fixed and array_ty.len.fixed == 0)) {
-                // @as([*]T, @ptrCast(&field))
-                const addr = try ZigTag.address_of.create(t.arena, field_access);
-                const elem_type = try t.transType(scope, array_ty.elem, field.name_tok);
-                const ptr_type = try ZigTag.c_pointer.create(t.arena, .{
-                    .is_const = array_ty.elem.@"const" or (kind == .ptr and base_info.@"const"),
-                    .is_volatile = array_ty.elem.@"volatile",
-                    .elem_type = elem_type,
-                });
-                const ptr_cast = try ZigTag.ptr_cast.create(t.arena, addr);
-                return ZigTag.as.create(t.arena, .{ .lhs = ptr_type, .rhs = ptr_cast });
+            if (array_ty.len == .incomplete or (array_ty.len == .fixed and array_ty.len.fixed == 0)) {
+                return ZigTag.call.create(t.arena, .{ .lhs = field_access, .args = &.{} });
             }
         }
     }
@@ -3849,6 +3838,57 @@ fn vectorTypeInfo(t: *Translator, vec_node: ZigNode, field: []const u8) TransErr
     const typeinfo_call = try ZigTag.typeinfo.create(t.arena, typeof_call);
     const vector_type_info = try ZigTag.field_access.create(t.arena, .{ .lhs = typeinfo_call, .field_name = "vector" });
     return ZigTag.field_access.create(t.arena, .{ .lhs = vector_type_info, .field_name = field });
+}
+
+/// Build a getter function for a flexible array field in a C record
+/// e.g. `T items[]` or `T items[0]`. The generated function returns a [*c] pointer
+/// to the flexible array with the correct const and volatile qualifiers
+fn createFlexibleMemberFn(
+    t: *Translator,
+    member_name: []const u8,
+    field_name: []const u8,
+) Error!ZigNode {
+    const self_param_name = "self";
+    const self_param = try ZigTag.identifier.create(t.arena, self_param_name);
+    const self_type = try ZigTag.typeof.create(t.arena, self_param);
+
+    const fn_params = try t.arena.alloc(ast.Payload.Param, 1);
+    fn_params[0] = .{
+        .name = self_param_name,
+        .type = ZigTag.@"anytype".init(),
+        .is_noalias = false,
+    };
+
+    // @typeInfo(@TypeOf(self.*.<field_name>)).pointer.child
+    const dereffed = try ZigTag.deref.create(t.arena, self_param);
+    const field_access = try ZigTag.field_access.create(t.arena, .{ .lhs = dereffed, .field_name = field_name });
+    const type_of = try ZigTag.typeof.create(t.arena, field_access);
+    const type_info = try ZigTag.typeinfo.create(t.arena, type_of);
+    const array_info = try ZigTag.field_access.create(t.arena, .{ .lhs = type_info, .field_name = "array" });
+    const child_info = try ZigTag.field_access.create(t.arena, .{ .lhs = array_info, .field_name = "child" });
+
+    const return_type = try t.createHelperCallNode(.FlexibleArrayType, &.{ self_type, child_info });
+
+    // return @ptrCast(&self.*.<field_name>);
+    const address_of = try ZigTag.address_of.create(t.arena, field_access);
+    const casted = try ZigTag.ptr_cast.create(t.arena, address_of);
+    const return_stmt = try ZigTag.@"return".create(t.arena, casted);
+    const body = try ZigTag.block_single.create(t.arena, return_stmt);
+
+    return ZigTag.func.create(t.arena, .{
+        .is_pub = true,
+        .is_extern = false,
+        .is_export = false,
+        .is_inline = false,
+        .is_var_args = false,
+        .name = member_name,
+        .linksection_string = null,
+        .explicit_callconv = null,
+        .params = fn_params,
+        .return_type = return_type,
+        .body = body,
+        .alignment = null,
+    });
 }
 
 // =================
