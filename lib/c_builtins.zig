@@ -72,6 +72,13 @@ pub inline fn exp(val: f64) f64 {
     return @exp(val);
 }
 
+/// The return value of __builtin_expect is `expr`. `c` is the expected value
+/// of `expr` and is used as a hint to the compiler in C. Here it is unused.
+pub inline fn expect(expr: c_long, c: c_long) c_long {
+    _ = c;
+    return expr;
+}
+
 pub inline fn fabsf(val: f32) f32 {
     return @abs(val);
 }
