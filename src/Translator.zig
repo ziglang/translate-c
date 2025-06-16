@@ -116,26 +116,51 @@ fn fail(
     return err;
 }
 
-// TODO audit usages, not valid in function scope
-pub fn failDecl(t: *Translator, tok_idx: TokenIndex, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
+pub fn failDecl(
+    t: *Translator,
+    scope: *Scope,
+    tok_idx: TokenIndex,
+    name: []const u8,
+    comptime format: []const u8,
+    args: anytype,
+) Error!void {
     const loc = t.tree.tokens.items(.loc)[tok_idx];
-    return t.failDeclExtra(loc, name, format, args);
+    return t.failDeclExtra(scope, loc, name, format, args);
 }
 
-pub fn failDeclExtra(t: *Translator, loc: aro.Source.Location, name: []const u8, comptime format: []const u8, args: anytype) Error!void {
+pub fn failDeclExtra(
+    t: *Translator,
+    scope: *Scope,
+    loc: aro.Source.Location,
+    name: []const u8,
+    comptime format: []const u8,
+    args: anytype,
+) Error!void {
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
-    try t.addTopLevelDecl(name, try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg }));
+    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg });
+
     const str = try t.locStr(loc);
     const location_comment = try std.fmt.allocPrint(t.arena, "// {s}", .{str});
-    try t.global_scope.nodes.append(t.gpa, try ZigTag.warning.create(t.arena, location_comment));
+    const loc_node = try ZigTag.warning.create(t.arena, location_comment);
+
+    if (scope.id == .root) {
+        try t.addTopLevelDecl(name, fail_decl);
+        try scope.appendNode(loc_node);
+    } else {
+        try scope.appendNode(fail_decl);
+        try scope.appendNode(loc_node);
+
+        const bs = try scope.findBlockScope(t);
+        try bs.discardVariable(name);
+    }
 }
 
 fn warn(t: *Translator, scope: *Scope, tok_idx: TokenIndex, comptime format: []const u8, args: anytype) !void {
     const loc = t.tree.tokens.items(.loc)[tok_idx];
     const str = try t.locStr(loc);
-    const value = try std.fmt.allocPrint(t.arena, "\n// {s}: warning: " ++ format, .{str} ++ args);
+    const value = try std.fmt.allocPrint(t.arena, "// {s}: warning: " ++ format, .{str} ++ args);
     try scope.appendNode(try ZigTag.warning.create(t.arena, value));
 }
 
@@ -380,7 +405,7 @@ fn transTypeDef(t: *Translator, scope: *Scope, typedef_node: Node.Index) Error!v
     const typedef_loc = typedef_decl.name_tok;
     const init_node = t.transType(scope, typedef_decl.qt, typedef_loc) catch |err| switch (err) {
         error.UnsupportedType => {
-            return t.failDecl(typedef_loc, name, "unable to resolve typedef child type", .{});
+            return t.failDecl(scope, typedef_loc, name, "unable to resolve typedef child type", .{});
         },
         error.OutOfMemory => |e| return e,
     };
@@ -638,7 +663,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
 
     const proto_node = t.transFnType(&t.global_scope.base, function.qt, func_ty, fn_decl_loc, proto_ctx) catch |err| switch (err) {
         error.UnsupportedType => {
-            return t.failDecl(fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
+            return t.failDecl(scope, fn_decl_loc, fn_name, "unable to resolve prototype of function", .{});
         },
         error.OutOfMemory => |e| return e,
     };
@@ -726,10 +751,10 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     };
 
     if (t.typeWasDemotedToOpaque(variable.qt)) {
-        if (variable.storage_class != .@"extern") {
-            return t.failDecl(variable.name_tok, name, "non-extern variable has opaque type", .{});
+        if (variable.storage_class != .@"extern" and scope.id == .root) {
+            return t.failDecl(scope, variable.name_tok, name, "non-extern variable has opaque type", .{});
         } else {
-            return t.failDecl(variable.name_tok, name, "local variable has opaque type", .{});
+            return t.failDecl(scope, variable.name_tok, name, "local variable has opaque type", .{});
         }
     }
 
@@ -738,7 +763,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     else
         t.transType(scope, variable.qt, variable.name_tok)) catch |err| switch (err) {
         error.UnsupportedType => {
-            return t.failDecl(variable.name_tok, name, "unable to translate variable declaration type", .{});
+            return t.failDecl(scope, variable.name_tok, name, "unable to translate variable declaration type", .{});
         },
         else => |e| return e,
     };
@@ -755,7 +780,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             else
                 t.transExprCoercing(scope, init, .used)) catch |err| switch (err) {
                 error.UnsupportedTranslation, error.UnsupportedType => {
-                    return t.failDecl(variable.name_tok, name, "unable to resolve var init expr", .{});
+                    return t.failDecl(scope, variable.name_tok, name, "unable to resolve var init expr", .{});
                 },
                 else => |e| return e,
             };
@@ -896,7 +921,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
 
         break :blk t.transType(scope, enum_ty.tag.?, enum_decl.name_or_kind_tok) catch |err| switch (err) {
             error.UnsupportedType => {
-                return t.failDecl(enum_decl.name_or_kind_tok, name, "unable to translate enum integer type", .{});
+                return t.failDecl(scope, enum_decl.name_or_kind_tok, name, "unable to translate enum integer type", .{});
             },
             else => |e| return e,
         };
@@ -3829,8 +3854,8 @@ fn transMacros(t: *Translator) !void {
 
         if (t.checkTranslatableMacro(tok_list.items, macro.params)) |err| {
             switch (err) {
-                .undefined_identifier => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
-                .invalid_arg_usage => |ident| try t.failDeclExtra(macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
+                .undefined_identifier => |ident| try t.failDeclExtra(&t.global_scope.base, macro.loc, name, "unable to translate macro: undefined identifier `{s}`", .{ident}),
+                .invalid_arg_usage => |ident| try t.failDeclExtra(&t.global_scope.base, macro.loc, name, "unable to translate macro: untranslatable usage of arg `{s}`", .{ident}),
             }
             continue;
         }

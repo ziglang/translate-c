@@ -8,9 +8,10 @@ void initialize(void) {
 }
 
 // translate
-// expect=fail
 //
-// warning: local variable has opaque type
-//
-// warning: unable to translate function, demoted to extern
-// pub extern fn initialize() void;
+// warning: struct demoted to opaque type - has bitfield
+// pub const struct_my_struct = opaque {};
+// pub export fn initialize() void {
+//     pub const S = @compileError("local variable has opaque type");
+//     _ = &S;
+// }
