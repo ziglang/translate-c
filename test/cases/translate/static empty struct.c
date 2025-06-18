@@ -9,7 +9,7 @@ static inline void foo() {
 // target=x86_64-linux
 //
 // pub const struct_empty_struct = extern struct {};
-// pub fn foo(...) callconv(.c) void {
+// pub fn foo() callconv(.c) void {
 //     const static_local_bar = struct {
 //         var bar: struct_empty_struct = struct_empty_struct{};
 //     };

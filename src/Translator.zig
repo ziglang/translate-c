@@ -655,14 +655,19 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
         return; // Avoid processing this decl twice
 
     const fn_decl_loc = function.name_tok;
-    const has_body = function.body != null;
+    const has_body = function.body != null and func_ty.kind != .variadic;
+    if (function.body != null and func_ty.kind == .variadic) {
+        try t.warn(scope, function.name_tok, "TODO unable to translate variadic function, demoted to extern", .{});
+    }
+
     const is_always_inline = has_body and function.qt.getAttribute(t.comp, .always_inline) != null;
     const proto_ctx: FnProtoContext = .{
         .fn_name = fn_name,
         .is_always_inline = is_always_inline,
         .is_extern = !has_body,
-        .is_export = !function.static and has_body and !is_always_inline,
+        .is_export = !function.static and has_body and !is_always_inline and !function.@"inline",
         .is_pub = is_pub,
+        .has_body = has_body,
         .cc = if (function.qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
             .c => .c,
             .stdcall => .x86_stdcall,
@@ -1281,6 +1286,7 @@ const FnProtoContext = struct {
     is_extern: bool = false,
     is_always_inline: bool = false,
     fn_name: ?[]const u8 = null,
+    has_body: bool = false,
     cc: ast.Payload.Func.CallingConvention = .c,
 };
 
@@ -1354,7 +1360,7 @@ fn transFnType(
             .is_var_args = switch (func_ty.kind) {
                 .normal => false,
                 .variadic => true,
-                .old_style => !ctx.is_export and !ctx.is_always_inline,
+                .old_style => !ctx.is_export and !ctx.is_always_inline and !ctx.has_body,
             },
             .name = ctx.fn_name,
             .linksection_string = linksection_string,
@@ -1371,7 +1377,7 @@ fn transFnType(
 /// Produces a Zig AST node by translating a Type, respecting the width, but modifying the signed-ness.
 /// Asserts the type is an integer.
 fn transTypeIntWidthOf(t: *Translator, qt: QualType, is_signed: bool) TypeError!ZigNode {
-    return ZigTag.type.create(t.arena, switch (qt.base(t.comp).type) {
+    return ZigTag.type.create(t.arena, loop: switch (qt.base(t.comp).type) {
         .int => |int_ty| switch (int_ty) {
             .char, .schar, .uchar => if (is_signed) "i8" else "u8",
             .short, .ushort => if (is_signed) "c_short" else "c_ushort",
@@ -1384,6 +1390,12 @@ fn transTypeIntWidthOf(t: *Translator, qt: QualType, is_signed: bool) TypeError!
             if (is_signed) "i" else "u",
             bit_int_ty.bits,
         }),
+        .@"enum" => |enum_ty| blk: {
+            const tag_ty = enum_ty.tag orelse
+                break :blk if (is_signed) "c_int" else "c_uint";
+
+            continue :loop tag_ty.base(t.comp).type;
+        },
         else => unreachable, // only call this function when it has already been determined the type is int
     });
 }
@@ -2493,10 +2505,11 @@ fn transIntCast(t: *Translator, operand: ZigNode, src_qt: QualType, dest_qt: Qua
 /// Same as `transExpr` but adds a `&` if the expression is an identifier referencing a function type.
 fn transPointerCastExpr(t: *Translator, scope: *Scope, expr: Node.Index) TransError!ZigNode {
     const sub_expr_node = try t.transExpr(scope, expr, .used);
-    if (expr.qt(t.tree).get(t.comp, .pointer)) |ptr_ty| {
-        if (ptr_ty.child.is(t.comp, .func) and sub_expr_node.tag() == .identifier) {
+    switch (expr.get(t.tree)) {
+        .cast => |cast| if (cast.kind == .function_to_pointer and sub_expr_node.tag() == .identifier) {
             return ZigTag.address_of.create(t.arena, sub_expr_node);
-        }
+        },
+        else => {},
     }
     return sub_expr_node;
 }

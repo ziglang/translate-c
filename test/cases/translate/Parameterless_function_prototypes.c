@@ -8,7 +8,6 @@ static void g();
 static void h(void);
 
 // translate
-// expect=fail
 //
 // pub export fn a() void {}
 // pub export fn b() void {}
@@ -16,5 +15,5 @@ static void h(void);
 // pub extern fn d() void;
 // pub fn e() callconv(.c) void {}
 // pub fn f() callconv(.c) void {}
-// pub extern fn g() void;
+// pub extern fn g(...) void;
 // pub extern fn h() void;

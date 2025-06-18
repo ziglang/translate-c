@@ -4,7 +4,6 @@ void c(void) {}
 static void foo() {}
 
 // translate
-// expect=fail
 //
 // pub fn a() callconv(.c) void {}
 // pub fn b() callconv(.c) void {}
