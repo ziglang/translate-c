@@ -731,7 +731,7 @@ pub const Payload = struct {
         data: struct {
             type: Node,
             filler: Node,
-            count: usize,
+            count: u64,
         },
     };
 
@@ -757,7 +757,7 @@ pub const Payload = struct {
         base: Payload,
         data: struct {
             string: Node,
-            end: usize,
+            end: u64,
         },
     };
 
@@ -2323,7 +2323,7 @@ fn renderArrayInit(c: *Context, lhs: NodeIndex, inits: []const Node) !NodeIndex 
     }
 }
 
-fn renderArrayType(c: *Context, len: usize, elem_type: Node) !NodeIndex {
+fn renderArrayType(c: *Context, len: u64, elem_type: Node) !NodeIndex {
     const l_bracket = try c.addToken(.l_bracket, "[");
     const len_expr = try c.addNode(.{
         .tag = .number_literal,
@@ -2341,7 +2341,7 @@ fn renderArrayType(c: *Context, len: usize, elem_type: Node) !NodeIndex {
     });
 }
 
-fn renderNullSentinelArrayType(c: *Context, len: usize, elem_type: Node) !NodeIndex {
+fn renderNullSentinelArrayType(c: *Context, len: u64, elem_type: Node) !NodeIndex {
     const l_bracket = try c.addToken(.l_bracket, "[");
     const len_expr = try c.addNode(.{
         .tag = .number_literal,

@@ -29,9 +29,9 @@ jobs:
       - name: Build
         run: zig build
 
-      # - name: Build 32-bit
-      #   run: zig build -Dtarget=arm-linux
-      #   if: matrix.os == 'ubuntu-latest'
+      - name: Build 32-bit
+        run: zig build -Dtarget=arm-linux
+        if: matrix.os == 'ubuntu-latest'
 
       - name: Build release
         run: zig build --release=safe

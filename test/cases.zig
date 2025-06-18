@@ -36,9 +36,6 @@ pub fn addCaseTests(
         const case = caseFromFile(b, entry, target.query) catch |err|
             std.debug.panic("failed to process case '{s}': {s}", .{ entry.path, @errorName(err) });
 
-        // Skip cases we expect to fail, would be nice to be able to check that they actually do fail.
-        if (case.expect == .fail) continue;
-
         for (translate_exes) |exe| switch (case.kind) {
             .translate => |output| {
                 test_translate_step.test_results.test_count += 1;
@@ -101,7 +98,6 @@ const Case = struct {
     name: []const u8,
     target: std.Build.ResolvedTarget,
     input: []const u8,
-    expect: Expect,
     kind: Kind,
     skip_windows: bool,
 
@@ -137,7 +133,6 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
     };
 
     var target = default_target;
-    var expect: Case.Expect = .pass;
     var skip_windows = true;
 
     var it = std.mem.tokenizeScalar(u8, manifest, '\n');
@@ -161,8 +156,6 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
         const value = kv_it.next() orelse return error.MissingValuesForConfig;
         if (std.mem.eql(u8, key, "target")) {
             target = try std.Target.Query.parse(.{ .arch_os_abi = value });
-        } else if (std.mem.eql(u8, key, "expect")) {
-            expect = std.meta.stringToEnum(Case.Expect, value) orelse return error.InvalidExpectValue;
         } else if (std.mem.eql(u8, key, "skip_windows")) {
             skip_windows = std.mem.eql(u8, value, "true");
         } else return error.InvalidTestConfigOption;
@@ -172,7 +165,6 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
         .name = std.fs.path.stem(entry.basename),
         .target = b.resolveTargetQuery(target),
         .input = input,
-        .expect = expect,
         .kind = switch (kind) {
             .run => .{ .run = try trailing(b.allocator, &it) },
             .translate => .{ .translate = try trailingSplit(b.allocator, &it) },

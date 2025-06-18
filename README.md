@@ -1,8 +1,5 @@
 # Translate-C
 
-> [!WARNING]
-> This project is WIP and not ready for general use only passing ~92% (355/383) of the current tests.
-
 A Zig package for translating C code into Zig code intended to replace `@cImport` and `zig translate-c`.
 
 ## Usage examples
