@@ -31,7 +31,7 @@ pub fn main() u8 {
         } },
     };
 
-    var comp = aro.Compilation.initDefault(gpa, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -50,7 +50,7 @@ pub fn main() u8 {
     var driver: aro.Driver = .{ .comp = &comp, .diagnostics = &diagnostics, .aro_name = exe_name };
     defer driver.deinit();
 
-    var toolchain: aro.Toolchain = .{ .driver = &driver, .arena = arena, .filesystem = .{ .real = comp.cwd } };
+    var toolchain: aro.Toolchain = .{ .driver = &driver, .filesystem = .{ .real = comp.cwd } };
     defer toolchain.deinit();
 
     translate(&driver, &toolchain, args) catch |err| switch (err) {
