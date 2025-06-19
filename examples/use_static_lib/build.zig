@@ -45,8 +45,12 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Build and test the executable");
     b.default_step = test_step;
+
+    // Windows libc changes stdout newlines to CRLF by default.
+    const newline: []const u8 = if (target.result.os.tag == .windows) "\r\n" else "\n";
+
     const test_exe = b.addRunArtifact(main_exe);
-    test_exe.expectStdOutEqual("1 + 2 = 3\n");
+    test_exe.expectStdOutEqual(b.fmt("1 + 2 = 3{s}", .{newline}));
     test_step.dependOn(&test_exe.step);
 
     const run_step = b.step("run", "Build and run the executable");

@@ -39,12 +39,15 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Build and test both executables");
     b.default_step = test_step;
 
+    // Windows libc changes stdout newlines to CRLF by default.
+    const newline: []const u8 = if (target.result.os.tag == .windows) "\r\n" else "\n";
+
     const test_c = b.addRunArtifact(c_exe);
-    test_c.expectStdOutEqual("Hello from my C program!\n");
+    test_c.expectStdOutEqual(b.fmt("Hello from my C program!{s}", .{newline}));
     test_step.dependOn(&test_c.step);
 
     const test_translated = b.addRunArtifact(translated_exe);
-    test_translated.expectStdOutEqual("Hello from my Zig program!\n");
+    test_translated.expectStdOutEqual(b.fmt("Hello from my Zig program!{s}", .{newline}));
     test_step.dependOn(&test_translated.step);
 
     // These are just steps you can use to actually see the output of each executable.
