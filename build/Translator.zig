@@ -91,25 +91,28 @@ pub fn initInner(
         const triple = options.target.query.zigTriple(b.graph.arena) catch @panic("OOM");
         run.addArg(b.fmt("--target={s}", .{triple}));
     }
-    if (!options.link_libc) {
+    if (options.link_libc) {
+        // If we're targeting native Linux, Aro's toolchain can find include directories.
+        // Otherwise, we'll have to give it a helping hand.
+        if (!options.target.query.isNative() or options.target.result.os.tag != .linux) {
+            run.addArg("-nostdlibinc"); // Aro should still check its builtin dir, but we're providing everything else
+            const libc = std.zig.LibCDirs.detect(
+                b.graph.arena,
+                b.graph.zig_lib_directory.path orelse ".",
+                options.target.result,
+                options.target.query.isNativeAbi(),
+                options.link_libc,
+                null,
+            ) catch |err| std.debug.panic("failed to locate libc: {s}", .{@errorName(err)});
+            for (libc.libc_include_dir_list) |include_dir| {
+                appendIncludeArg(run, "-isystem", .{ .cwd_relative = include_dir });
+            }
+            for (libc.libc_framework_dir_list) |framework_dir| {
+                appendIncludeArg(run, "-iframework", .{ .cwd_relative = framework_dir });
+            }
+        }
+    } else {
         run.addArg("-nostdinc");
-    }
-    if (options.target.result.os.tag != .linux) {
-        // Aro's non-linux toolchains are not mature enough to find the necessary directories.
-        const libc = std.zig.LibCDirs.detect(
-            b.graph.arena,
-            b.graph.zig_lib_directory.path orelse ".",
-            options.target.result,
-            options.target.query.isNativeAbi(),
-            options.link_libc,
-            null,
-        ) catch |err| std.debug.panic("failed to locate libc: {s}", .{@errorName(err)});
-        for (libc.libc_include_dir_list) |include_dir| {
-            appendIncludeArg(run, "-isystem", .{ .cwd_relative = include_dir });
-        }
-        for (libc.libc_framework_dir_list) |framework_dir| {
-            appendIncludeArg(run, "-iframework", .{ .cwd_relative = framework_dir });
-        }
     }
 
     switch (options.warnings) {
