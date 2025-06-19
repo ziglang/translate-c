@@ -50,5 +50,8 @@ jobs:
           zig build test -Dtarget=native-windows-msvc -Doptimize=ReleaseSafe
           zig build test -Dtarget=native-windows-msvc -Doptimize=ReleaseSmall
 
+      - name: Run Cross-Translation Tests
+        run: zig build test -Doptimize=Debug -Dtest-cross-targets
+
       - name: Run Examples
         run: zig build all --build-file examples/build.zig

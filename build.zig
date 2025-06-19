@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
 
     const skip_translate = b.option(bool, "skip-translate", "Main test suite skips translate tests") orelse false;
     const skip_run_translated = b.option(bool, "skip-run-translated", "Main test suite skips run-translated tests") orelse false;
+    const test_cross_targets = b.option(bool, "test-cross-targets", "Include cross-translation targets in the test cases") orelse false;
     const use_llvm = b.option(bool, "llvm", "Use LLVM backend to generate aro executable");
 
     const aro = b.dependency("aro", .{
@@ -113,6 +114,7 @@ pub fn build(b: *std.Build) void {
         translator_conf,
         target,
         optimize,
+        test_cross_targets,
         test_translate_step,
         test_run_translated_step,
     );
