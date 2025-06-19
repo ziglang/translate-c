@@ -92,18 +92,13 @@ pub fn initInner(
         run.addArg(b.fmt("--target={s}", .{triple}));
     }
     if (options.link_libc) {
-        // If we're targeting native Linux, Aro's toolchain can find include directories.
-        // Otherwise, we'll have to give it a helping hand.
+        // If we're cross-compiling, we need to use Zig's libc directories.
+        //
+        // Currently calling into Zig's libc detection is also necessary for native targets other
+        // than Linux due to deficiencies in Aro's toolchains for non-Linux targets.
         if (!options.target.query.isNative() or options.target.result.os.tag != .linux) {
             run.addArg("-nostdlibinc"); // Aro should still check its builtin dir, but we're providing everything else
-            const libc = std.zig.LibCDirs.detect(
-                b.graph.arena,
-                b.graph.zig_lib_directory.path orelse ".",
-                options.target.result,
-                options.target.query.isNativeAbi(),
-                options.link_libc,
-                null,
-            ) catch |err| std.debug.panic("failed to locate libc: {s}", .{@errorName(err)});
+            const libc = detectLibCDirs(b, options.target);
             for (libc.libc_include_dir_list) |include_dir| {
                 appendIncludeArg(run, "-isystem", .{ .cwd_relative = include_dir });
             }
@@ -187,6 +182,35 @@ pub fn addConfigHeader(t: *const Translator, ch: *Build.Step.ConfigHeader) void 
 fn appendIncludeArg(run: *Build.Step.Run, arg: []const u8, path: Build.LazyPath) void {
     run.addArg(arg);
     run.addDirectoryArg(path);
+}
+/// This is just a wrapper for `std.zig.LibCDirs.detect` which caches the per-target results. It is
+/// desirable to cache this because `detect` has been observed to be quite slow on macOS for native
+/// targets, which leads to the 'configure' phase for this project taking a full minute(!) due to
+/// all of the test cases.
+///
+/// This function assumes `link_libc == true`.
+fn detectLibCDirs(b: *Build, target: Build.ResolvedTarget) std.zig.LibCDirs {
+    // TODO: this is a bad solution. One of three things needs to happen:
+    // * The Zig build system gets a better way to cache state like this
+    // * Aro or translate-c starts performing this query itself
+    // * `LibCDirs` stops being slow, making the caching unnecessary
+    const S = struct {
+        var lib_c_dirs_cache: std.AutoArrayHashMapUnmanaged(std.Target.Query, std.zig.LibCDirs) = .empty;
+    };
+    // Assumes that `b.graph.arena` is the same every time this is called. That assumption is valid
+    // because `b.graph` is state which is local to the build runner and shared with the whole graph.
+    const gop = S.lib_c_dirs_cache.getOrPut(b.graph.arena, target.query) catch @panic("OOM");
+    if (!gop.found_existing) {
+        gop.value_ptr.* = std.zig.LibCDirs.detect(
+            b.graph.arena,
+            b.graph.zig_lib_directory.path orelse ".",
+            target.result,
+            target.query.isNativeAbi(),
+            true,
+            null,
+        ) catch |err| std.debug.panic("failed to locate libc: {s}", .{@errorName(err)});
+    }
+    return gop.value_ptr.*;
 }
 
 const std = @import("std");
