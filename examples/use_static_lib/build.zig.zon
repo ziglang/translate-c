@@ -1,7 +1,7 @@
 .{
-    .name = .import_header,
+    .name = .use_static_lib,
     .version = "0.0.0",
-    .fingerprint = 0x124312d94ed7032c,
+    .fingerprint = 0x63e0d025a416d0df,
     .paths = .{""},
 
     .dependencies = .{

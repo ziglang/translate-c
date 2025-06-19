@@ -10,13 +10,17 @@ int main(void) {
     TEST_NEGATIVE(long);
     TEST_NEGATIVE(long long);
     TEST_NEGATIVE(int64_t);
+#ifdef __SIZEOF_INT128__
     TEST_NEGATIVE(__int128);
+#endif
     TEST_UNSIGNED(unsigned);
     TEST_UNSIGNED(unsigned long);
     TEST_UNSIGNED(unsigned long long);
     TEST_UNSIGNED(uint64_t);
     TEST_UNSIGNED(size_t);
+#ifdef __SIZEOF_INT128__
     TEST_UNSIGNED(unsigned __int128);
+#endif
     return 0;
 }
 

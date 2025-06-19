@@ -1,102 +1,90 @@
 const std = @import("std");
-const TranslateC = @import("../build/TranslateC.zig");
+const Translator = @import("../build/Translator.zig");
 
-pub fn addCaseTests(
+const cross_targets: []const []const u8 = &.{
+    "x86_64-linux",
+    "x86_64-windows",
+    "aarch64-linux",
+    "aarch64-macos",
+    "arm-linux",
+};
+
+pub fn lowerCases(
     b: *std.Build,
-    tests_step: *std.Build.Step,
-    translate_exes: []const *std.Build.Step.Compile,
-    builtins_module: *std.Build.Module,
-    helpers_module: *std.Build.Module,
+    translator_conf: Translator.TranslateCConfig,
     target: std.Build.ResolvedTarget,
-    skip_translate: bool,
-    skip_run_translated: bool,
-) !void {
-    const test_translate_step = b.step("test-translate", "Run the C translation tests");
-    if (!skip_translate) tests_step.dependOn(test_translate_step);
-
-    const test_run_translated_step = b.step("test-run-translated", "Run the Run-Translated-C tests");
-    if (!skip_run_translated) tests_step.dependOn(test_run_translated_step);
-
-    for (translate_exes) |exe| {
-        test_translate_step.dependOn(&exe.step);
-        test_run_translated_step.dependOn(&exe.step);
-    }
+    optimize: std.builtin.OptimizeMode,
+    test_cross_targets: bool,
+    test_translate_step: *std.Build.Step,
+    test_run_translated_step: *std.Build.Step,
+) void {
+    var targets_buf: [cross_targets.len + 1]std.Build.ResolvedTarget = undefined;
+    const targets: []const std.Build.ResolvedTarget = targets: {
+        targets_buf[0] = target;
+        if (!test_cross_targets) break :targets targets_buf[0..1];
+        for (cross_targets, targets_buf[1..]) |query_str, *resolved| {
+            const query = std.Target.Query.parse(.{ .arch_os_abi = query_str }) catch unreachable;
+            resolved.* = b.resolveTargetQuery(query);
+        }
+        break :targets &targets_buf;
+    };
 
     var dir = b.build_root.handle.openDir("test/cases", .{ .iterate = true }) catch |err| {
-        const fail_step = b.addFail(b.fmt("unable to open test/cases: {s}\n", .{@errorName(err)}));
+        const fail_step = b.addFail(b.fmt("unable to open test/cases: {s}", .{@errorName(err)}));
         test_translate_step.dependOn(&fail_step.step);
         test_run_translated_step.dependOn(&fail_step.step);
         return;
     };
     defer dir.close();
 
-    var it = try dir.walk(b.allocator);
-    while (try it.next()) |entry| {
+    var it = dir.walk(b.allocator) catch |err| std.debug.panic("failed to walk cases: {s}", .{@errorName(err)});
+    while (it.next() catch |err| {
+        std.debug.panic("failed to walk cases: {s}", .{@errorName(err)});
+    }) |entry| {
         if (entry.kind != .file) continue;
-        const case = caseFromFile(b, entry, target.query) catch |err|
+        const case = caseFromFile(b, entry) catch |err|
             std.debug.panic("failed to process case '{s}': {s}", .{ entry.path, @errorName(err) });
 
-        for (translate_exes) |exe| switch (case.kind) {
-            .translate => |output| {
-                test_translate_step.test_results.test_count += 1;
-                const annotated_case_name = b.fmt("translate {s}", .{case.name});
+        const source_file = b.addWriteFiles().add("tmp.c", case.input);
 
-                const write_src = b.addWriteFiles();
-                const file_source = write_src.add("tmp.c", case.input);
-
-                const translate_c = TranslateC.create(b, .{
-                    .root_source_file = file_source,
-                    .optimize = .Debug,
-                    .target = case.target,
-                    .translate_c_exe = exe,
-                    .builtins_module = builtins_module,
-                    .helpers_module = helpers_module,
-                });
-                translate_c.step.name = b.fmt("{s} TranslateC", .{annotated_case_name});
-
-                const check_file = translate_c.addCheckFile(output);
-                check_file.step.name = b.fmt("{s} CheckFile", .{annotated_case_name});
-                test_translate_step.dependOn(&check_file.step);
-            },
-            .run => |output| {
-                test_run_translated_step.test_results.test_count += 1;
-                if (case.skip_windows and target.result.os.tag == .windows) {
-                    test_run_translated_step.test_results.skip_count += 1;
-                    continue;
-                }
-
-                const annotated_case_name = b.fmt("run-translated {s}", .{case.name});
-
-                const write_src = b.addWriteFiles();
-                const file_source = write_src.add("tmp.c", case.input);
-
-                const translate_c = TranslateC.create(b, .{
-                    .root_source_file = file_source,
-                    .optimize = .Debug,
-                    .target = case.target,
-                    .translate_c_exe = exe,
-                    .builtins_module = builtins_module,
-                    .helpers_module = helpers_module,
-                });
-                translate_c.step.name = b.fmt("{s} TranslateC", .{annotated_case_name});
-
-                const run_exe = translate_c.addExecutable(.{});
-                run_exe.step.name = b.fmt("{s} build-exe", .{annotated_case_name});
-                run_exe.linkLibC();
-                const run = b.addRunArtifact(run_exe);
-                run.step.name = b.fmt("{s} run", .{annotated_case_name});
-                run.expectStdOutEqual(output);
-                run.skip_foreign_checks = true;
-
-                test_run_translated_step.dependOn(&run.step);
-            },
-        };
+        const case_targets = if (case.target) |*t| t[0..1] else targets;
+        for (case_targets) |case_target| {
+            if (case.skip_windows and case_target.result.os.tag == .windows) {
+                continue;
+            }
+            const name_and_triple = b.fmt("{s} {s}", .{
+                case_target.query.zigTriple(b.graph.arena) catch @panic("OOM"),
+                case.name,
+            });
+            const translator: Translator = .initInner(b, translator_conf, .{
+                .name = name_and_triple,
+                .c_source_file = source_file,
+                .target = case_target,
+                .optimize = optimize,
+            });
+            switch (case.kind) {
+                .translate => |output| {
+                    const check_file = b.addCheckFile(translator.output_file, .{ .expected_matches = output });
+                    check_file.step.name = b.fmt("check-translated {s}", .{name_and_triple});
+                    test_translate_step.dependOn(&check_file.step);
+                },
+                .run => |output| {
+                    const exe = b.addExecutable(.{ .name = case.name, .root_module = translator.mod });
+                    const run = b.addRunArtifact(exe);
+                    run.step.name = b.fmt("run-translated {s}", .{name_and_triple});
+                    run.expectStdOutEqual(output);
+                    run.skip_foreign_checks = true;
+                    test_run_translated_step.dependOn(&run.step);
+                },
+            }
+        }
     }
 }
 
 const Case = struct {
     name: []const u8,
-    target: std.Build.ResolvedTarget,
+    /// This is an override; usually `null`.
+    target: ?std.Build.ResolvedTarget,
     input: []const u8,
     kind: Kind,
     skip_windows: bool,
@@ -113,7 +101,7 @@ const Case = struct {
     };
 };
 
-fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: std.Target.Query) !Case {
+fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
     const max_file_size = 10 * 1024 * 1024;
     const src = try entry.dir.readFileAlloc(b.allocator, entry.basename, max_file_size);
 
@@ -132,7 +120,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
         break :blk .{ bytes[0..manifest_start], bytes[manifest_start..] };
     };
 
-    var target = default_target;
+    var target: ?std.Target.Query = null;
     var skip_windows = true;
 
     var it = std.mem.tokenizeScalar(u8, manifest, '\n');
@@ -155,7 +143,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
         const key = kv_it.first();
         const value = kv_it.next() orelse return error.MissingValuesForConfig;
         if (std.mem.eql(u8, key, "target")) {
-            target = try std.Target.Query.parse(.{ .arch_os_abi = value });
+            target = try .parse(.{ .arch_os_abi = value });
         } else if (std.mem.eql(u8, key, "skip_windows")) {
             skip_windows = std.mem.eql(u8, value, "true");
         } else return error.InvalidTestConfigOption;
@@ -163,7 +151,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry, default_target: s
 
     return .{
         .name = std.fs.path.stem(entry.basename),
-        .target = b.resolveTargetQuery(target),
+        .target = if (target) |q| b.resolveTargetQuery(q) else null,
         .input = input,
         .kind = switch (kind) {
             .run => .{ .run = try trailing(b.allocator, &it) },
