@@ -164,12 +164,16 @@ fn warn(t: *Translator, scope: *Scope, tok_idx: TokenIndex, comptime format: []c
     try scope.appendNode(try ZigTag.warning.create(t.arena, value));
 }
 
-pub fn translate(
+pub const Options = struct {
     gpa: mem.Allocator,
     comp: *aro.Compilation,
     pp: *const aro.Preprocessor,
     tree: *const aro.Tree,
-) ![]u8 {
+    module_libs: bool,
+};
+
+pub fn translate(options: Options) ![]u8 {
+    const gpa = options.gpa;
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
@@ -179,9 +183,9 @@ pub fn translate(
         .arena = arena,
         .alias_list = .empty,
         .global_scope = try arena.create(Scope.Root),
-        .comp = comp,
-        .pp = pp,
-        .tree = tree,
+        .comp = options.comp,
+        .pp = options.pp,
+        .tree = options.tree,
     };
     translator.global_scope.* = Scope.Root.init(&translator);
     defer {
@@ -216,12 +220,21 @@ pub fn translate(
     var buf: std.ArrayList(u8) = .init(gpa);
     defer buf.deinit();
 
-    try buf.appendSlice(
-        \\pub const __builtin = @import("c_builtins");
-        \\pub const __helpers = @import("helpers");
-        \\
-        \\
-    );
+    if (options.module_libs) {
+        try buf.appendSlice(
+            \\pub const __builtin = @import("c_builtins");
+            \\pub const __helpers = @import("helpers");
+            \\
+            \\
+        );
+    } else {
+        try buf.appendSlice(
+            \\pub const __builtin = @import("c_builtins.zig");
+            \\pub const __helpers = @import("helpers.zig");
+            \\
+            \\
+        );
+    }
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
     defer {

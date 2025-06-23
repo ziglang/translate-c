@@ -46,6 +46,7 @@ pub const Options = struct {
     c_source_file: Build.LazyPath,
     target: Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    module_libs: bool = true,
     link_libc: bool = true,
     warnings: enum { ignore, show, @"error" } = .ignore,
 };
@@ -117,6 +118,10 @@ pub fn initInner(
     }
 
     appendIncludeArg(run, "-resource-dir", tc_conf.aro_resource_dir);
+
+    if (options.module_libs) {
+        run.addArg("-fmodule-libs");
+    }
 
     return .{
         .output_file = output_file,

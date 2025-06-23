@@ -42,6 +42,11 @@ pub fn build(b: *std.Build) void {
         .install_dir = .prefix,
         .install_subdir = "include",
     });
+    b.installDirectory(.{
+        .source_dir = b.path("lib"),
+        .install_dir = .prefix,
+        .install_subdir = "lib",
+    });
     b.installArtifact(translate_c_exe);
 
     // Re-expose the path to Aro's "resource directory" (which is actually just the repo root). This
@@ -66,7 +71,7 @@ pub fn build(b: *std.Build) void {
         break :step &run_cmd.step;
     });
 
-    const fmt_dirs: []const []const u8 = &.{ "build", "src", "test" };
+    const fmt_dirs: []const []const u8 = &.{ "build", "build.zig", "src", "lib", "test", "examples" };
 
     const fmt_step = b.step("fmt", "Modify source files in place to have conforming formatting");
     fmt_step.dependOn(&b.addFmt(.{ .paths = fmt_dirs }).step);

@@ -71,9 +71,11 @@ pub fn main() u8 {
 pub const usage =
     \\Usage {s}: [options] file [CC options]
     \\
-    \\General options:
-    \\  -h, --help      Print this message.
-    \\  -v, --version   Print translate-c version.
+    \\Options:
+    \\  --help              Print this message
+    \\  --version           Print translate-c version
+    \\  -fmodule-libs       Import libraries as modules
+    \\  -fno-module-libs    (default) Install libraries next to output file
     \\
     \\
 ;
@@ -86,23 +88,29 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     try macro_buf.appendSlice("#define __TRANSLATE_C__ 1\n");
 
+    var module_libs = false;
+
     const aro_args = args: {
         var i: usize = 0;
         for (args) |arg| {
             args[i] = arg;
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
+            if (mem.eql(u8, arg, "--help")) {
                 const stdout = std.io.getStdOut();
                 stdout.writer().print(usage, .{args[0]}) catch |er| {
                     return d.fatal("unable to print usage: {s}", .{aro.Driver.errorDescription(er)});
                 };
                 return;
-            } else if (mem.eql(u8, arg, "-v") or mem.eql(u8, arg, "--version")) {
+            } else if (mem.eql(u8, arg, "--version")) {
                 const stdout = std.io.getStdOut();
                 // TODO add version
                 stdout.writeAll("0.0.0-dev\n") catch |er| {
                     return d.fatal("unable to print version: {s}", .{aro.Driver.errorDescription(er)});
                 };
                 return;
+            } else if (mem.eql(u8, arg, "-fmodule-libs")) {
+                module_libs = true;
+            } else if (mem.eql(u8, arg, "-fno-module-libs")) {
+                module_libs = false;
             } else {
                 i += 1;
             }
@@ -147,7 +155,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         return error.FatalError;
     }
 
-    const rendered_zig = try Translator.translate(gpa, d.comp, &pp, &c_tree);
+    const rendered_zig = try Translator.translate(.{
+        .gpa = gpa,
+        .comp = d.comp,
+        .pp = &pp,
+        .tree = &c_tree,
+        .module_libs = module_libs,
+    });
     defer gpa.free(rendered_zig);
 
     var close_out_file = false;
@@ -157,6 +171,10 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     if (d.output_name) |path| blk: {
         if (std.mem.eql(u8, path, "-")) break :blk;
+        if (std.fs.path.dirname(path)) |dirname| {
+            std.fs.cwd().makePath(dirname) catch |err|
+                return d.fatal("failed to create path to '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
+        }
         out_file = std.fs.cwd().createFile(path, .{}) catch |err| {
             return d.fatal("failed to create output file '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });
         };
@@ -166,7 +184,45 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     out_file.writeAll(rendered_zig) catch |err|
         return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
 
+    if (!module_libs) {
+        const dest_path = if (d.output_name) |path| std.fs.path.dirname(path) else null;
+        installLibs(d, dest_path) catch |err|
+            return d.fatal("failed to install library files: {s}", .{aro.Driver.errorDescription(err)});
+    }
+
     if (fast_exit) process.exit(0);
+}
+
+fn installLibs(d: *aro.Driver, dest_path: ?[]const u8) !void {
+    const gpa = d.comp.gpa;
+    const cwd = std.fs.cwd();
+
+    const self_exe_path = try std.fs.selfExePathAlloc(gpa);
+    defer gpa.free(self_exe_path);
+
+    var cur_dir: []const u8 = self_exe_path;
+    while (std.fs.path.dirname(cur_dir)) |dirname| : (cur_dir = dirname) {
+        var base_dir = cwd.openDir(dirname, .{}) catch continue;
+        defer base_dir.close();
+
+        var lib_dir = base_dir.openDir("lib", .{}) catch continue;
+        defer lib_dir.close();
+
+        lib_dir.access("c_builtins.zig", .{}) catch continue;
+
+        {
+            const install_path = try std.fs.path.join(gpa, &.{ dest_path orelse "", "c_builtins.zig" });
+            defer gpa.free(install_path);
+            try lib_dir.copyFile("c_builtins.zig", cwd, install_path, .{});
+        }
+        {
+            const install_path = try std.fs.path.join(gpa, &.{ dest_path orelse "", "helpers.zig" });
+            defer gpa.free(install_path);
+            try lib_dir.copyFile("helpers.zig", cwd, install_path, .{});
+        }
+        return;
+    }
+    return error.FileNotFound;
 }
 
 comptime {
