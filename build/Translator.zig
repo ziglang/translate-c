@@ -209,7 +209,7 @@ fn detectLibCDirs(b: *Build, target: Build.ResolvedTarget) std.zig.LibCDirs {
         gop.value_ptr.* = std.zig.LibCDirs.detect(
             b.graph.arena,
             b.graph.zig_lib_directory.path orelse ".",
-            target.result,
+            &target.result,
             target.query.isNativeAbi(),
             true,
             null,
