@@ -178,9 +178,11 @@ fn createMacroFn(mt: *MacroTranslator, name: []const u8, ref: ZigNode, proto_ali
     var fn_params = std.ArrayList(ast.Payload.Param).init(mt.t.gpa);
     defer fn_params.deinit();
 
+    var block_scope = try Scope.Block.init(mt.t, &mt.t.global_scope.base, false);
+    defer block_scope.deinit();
+
     for (proto_alias.data.params) |param| {
-        const param_name = param.name orelse
-            try std.fmt.allocPrint(mt.t.arena, "arg_{d}", .{mt.t.getMangle()});
+        const param_name = try block_scope.makeMangledName(param.name orelse "arg");
 
         try fn_params.append(.{
             .name = param_name,
