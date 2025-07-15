@@ -23,11 +23,12 @@ pub fn main() u8 {
         return 1;
     };
 
-    const stderr = std.io.getStdErr();
+    var stderr_buf: [1024]u8 = undefined;
+    var stderr = std.fs.File.stderr().writer(&stderr_buf);
     var diagnostics: aro.Diagnostics = .{
-        .output = .{ .to_file = .{
-            .file = stderr,
-            .config = std.io.tty.detectConfig(stderr),
+        .output = .{ .to_writer = .{
+            .color = .detect(stderr.file),
+            .writer = &stderr.interface,
         } },
     };
 
@@ -63,6 +64,11 @@ pub fn main() u8 {
             if (fast_exit) process.exit(1);
             return 1;
         },
+        error.WriteFailed => {
+            std.debug.print("unable to write to stdout\n", .{});
+            if (fast_exit) process.exit(1);
+            return 1;
+        },
     };
     if (fast_exit) process.exit(@intFromBool(comp.diagnostics.errors != 0));
     return @intFromBool(comp.diagnostics.errors != 0);
@@ -83,11 +89,6 @@ pub const usage =
 fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     const gpa = d.comp.gpa;
 
-    var macro_buf = std.ArrayList(u8).init(gpa);
-    defer macro_buf.deinit();
-
-    try macro_buf.appendSlice("#define __TRANSLATE_C__ 1\n");
-
     var module_libs = false;
 
     const aro_args = args: {
@@ -95,17 +96,17 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         for (args) |arg| {
             args[i] = arg;
             if (mem.eql(u8, arg, "--help")) {
-                const stdout = std.io.getStdOut();
-                stdout.writer().print(usage, .{args[0]}) catch |er| {
-                    return d.fatal("unable to print usage: {s}", .{aro.Driver.errorDescription(er)});
-                };
+                var stdout_buf: [512]u8 = undefined;
+                var stdout = std.fs.File.stdout().writer(&stdout_buf);
+                try stdout.interface.print(usage, .{args[0]});
+                try stdout.interface.flush();
                 return;
             } else if (mem.eql(u8, arg, "--version")) {
-                const stdout = std.io.getStdOut();
+                var stdout_buf: [512]u8 = undefined;
+                var stdout = std.fs.File.stdout().writer(&stdout_buf);
                 // TODO add version
-                stdout.writeAll("0.0.0-dev\n") catch |er| {
-                    return d.fatal("unable to print version: {s}", .{aro.Driver.errorDescription(er)});
-                };
+                try stdout.interface.writeAll("0.0.0-dev\n");
+                try stdout.interface.flush();
                 return;
             } else if (mem.eql(u8, arg, "-fmodule-libs")) {
                 module_libs = true;
@@ -117,7 +118,24 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         }
         break :args args[0..i];
     };
-    assert(!try d.parseArgs(std.io.null_writer, macro_buf.writer(), aro_args));
+    const user_macros = macros: {
+        var macro_buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer macro_buf.deinit(gpa);
+
+        try macro_buf.appendSlice(gpa, "#define __TRANSLATE_C__ 1\n");
+
+        var discard_buf: [256]u8 = undefined;
+        var discarding: std.io.Writer.Discarding = .init(&discard_buf);
+        assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args));
+        if (macro_buf.items.len > std.math.maxInt(u32)) {
+            return d.fatal("user provided macro source exceeded max size", .{});
+        }
+
+        const content = try macro_buf.toOwnedSlice(gpa);
+        errdefer gpa.free(content);
+
+        break :macros try d.comp.addSourceFromOwnedBuffer("<command line>", content, .user);
+    };
 
     if (d.inputs.items.len != 1) {
         return d.fatal("expected exactly one input file", .{});
@@ -134,11 +152,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     };
 
     const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
-        error.StreamTooLong => return d.fatal("builtin macro source exceeded max size", .{}),
-        else => |e| return e,
-    };
-    const user_macros = d.comp.addSourceFromBuffer("<command line>", macro_buf.items) catch |err| switch (err) {
-        error.StreamTooLong => return d.fatal("user provided macro source exceeded max size", .{}),
+        error.FileTooBig => return d.fatal("builtin macro source exceeded max size", .{}),
         else => |e| return e,
     };
 
@@ -166,7 +180,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     var close_out_file = false;
     var out_file_path: []const u8 = "<stdout>";
-    var out_file = std.io.getStdOut();
+    var out_file: std.fs.File = .stdout();
     defer if (close_out_file) out_file.close();
 
     if (d.output_name) |path| blk: {
@@ -181,8 +195,11 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         close_out_file = true;
         out_file_path = path;
     }
-    out_file.writeAll(rendered_zig) catch |err|
-        return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(err) });
+
+    var out_buf: [4096]u8 = undefined;
+    var out_writer = out_file.writer(&out_buf);
+    out_writer.interface.writeAll(rendered_zig) catch
+        return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(out_writer.err.?) });
 
     if (!module_libs) {
         const dest_path = if (d.output_name) |path| std.fs.path.dirname(path) else null;
