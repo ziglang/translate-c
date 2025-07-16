@@ -526,15 +526,26 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         };
         const head_field_alignment: ?c_uint = if (has_alignment_attributes) t.headFieldAlignment(record_ty) else null;
 
+        // Check if this record has any bitfields first
+        const has_bitfields = for (record_ty.fields) |field| {
+            if (field.bit_width != .null) break true;
+        } else false;
+
+        if (has_bitfields) {
+            // Generate extern struct with packed bitfield structs
+            const struct_with_bitfields = t.transRecordWithBitfields(scope, record_ty, base, container_kind, container_kind_name) catch |err| switch (err) {
+                error.UnsupportedType, error.UnsupportedTranslation => |e| {
+                    try t.opaque_demotes.put(t.gpa, base.qt, {});
+                    try t.warn(scope, record_ty.fields[0].name_tok, "{s} demoted to opaque type - unable to translate bitfields, {s}", .{ container_kind_name, @errorName(e) });
+                    break :init ZigTag.opaque_literal.init();
+                },
+                error.OutOfMemory => |e| return e,
+            };
+            break :init struct_with_bitfields;
+        }
+
         for (record_ty.fields, 0..) |field, field_index| {
             const field_loc = field.name_tok;
-
-            // Demote record to opaque if it contains a bitfield
-            if (field.bit_width != .null) {
-                try t.opaque_demotes.put(t.gpa, base.qt, {});
-                try t.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
-                break :init ZigTag.opaque_literal.init();
-            }
 
             var field_name = field.name.lookup(t.comp);
             if (field.name_tok == 0) {
@@ -656,6 +667,255 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
         try scope.appendNode(node);
         try bs.discardVariable(name);
     }
+}
+
+fn createBitfieldType(t: *Translator, bits: u64, is_signed: bool) TransError!ZigNode {
+    // Always use integer type with exact bit width
+    const type_str = try std.fmt.allocPrint(t.arena, "{s}{d}", .{
+        if (is_signed) "i" else "u",
+        bits,
+    });
+    return ZigTag.type.create(t.arena, type_str);
+}
+
+fn transRecordWithBitfields(
+    t: *Translator,
+    scope: *Scope,
+    record_ty: aro.Type.Record,
+    base: anytype,
+    container_kind: ZigTag,
+    container_kind_name: []const u8,
+) TransError!ZigNode {
+    _ = container_kind_name; // Currently unused but kept for future debugging
+
+    var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, record_ty.fields.len);
+    defer fields.deinit();
+
+    var functions = std.ArrayList(ZigNode).init(t.gpa);
+    defer functions.deinit();
+
+    var unnamed_field_count: u32 = 0;
+    var bitfield_struct_index: u32 = 0;
+
+    // Group bitfields and regular fields
+    var field_index: usize = 0;
+    while (field_index < record_ty.fields.len) {
+        const field = record_ty.fields[field_index];
+
+        if (field.bit_width != .null) {
+            // Process bitfield group based on layout information
+            const group_start_offset = field.layout.offset_bits;
+            var group_end_index = field_index;
+
+            // Find all bitfields that belong to the same storage unit
+            while (group_end_index < record_ty.fields.len) {
+                const bf_field = record_ty.fields[group_end_index];
+                if (bf_field.bit_width == .null) break; // Regular field
+
+                const bit_width = bf_field.bit_width.unpack().?;
+
+                // Zero-width bitfield ends the current group
+                if (bit_width == 0) {
+                    if (group_end_index > field_index) break;
+                    // Skip zero-width bitfield
+                    group_end_index += 1;
+                    field_index = group_end_index;
+                    continue;
+                }
+
+                // For non-zero-width anonymous bitfields (like `:23`), they should be
+                // included in the current group as padding, not treated as separate fields
+                if (bf_field.name_tok == 0 and bit_width > 0) {
+                    // This is an anonymous bitfield with actual width (padding)
+                    // Include it in the current group but don't generate a separate field
+                    group_end_index += 1;
+                    continue;
+                }
+
+                // Check if this field is still in the same storage unit
+                // We determine this by checking if the offset is within the expected range
+                const field_offset = bf_field.layout.offset_bits;
+                const type_size_bits = bf_field.qt.bitSizeof(t.comp);
+
+                if (group_end_index > field_index) {
+                    // Check if this field starts in a new storage unit
+                    const expected_max_offset = group_start_offset + type_size_bits;
+                    if (field_offset >= expected_max_offset) {
+                        break; // Starts new storage unit
+                    }
+                }
+
+                group_end_index += 1;
+            }
+
+            if (group_end_index > field_index) {
+                // Create packed struct for this bitfield group
+                const bitfield_group = record_ty.fields[field_index..group_end_index];
+
+                // Determine storage unit size from the first field's type
+                const packed_struct_type = try createBitfieldPackedStruct(t, bitfield_group, base);
+
+                const bitfield_name = try std.fmt.allocPrint(t.arena, "bitfield{d}", .{bitfield_struct_index});
+                bitfield_struct_index += 1;
+
+                try fields.append(.{
+                    .name = bitfield_name,
+                    .type = packed_struct_type,
+                    .alignment = null,
+
+                    // ".{}" will enter unreachable
+                    // .default_value = try ZigTag.container_init_dot.create(t.arena, &.{}),
+
+                    // alternative.
+                    // .default_value = if (container_kind == .@"struct")
+                    //     try ZigTag.std_mem_zeroes.create(t.arena, packed_struct_type)
+                    // else
+                    //     null,
+
+                    .default_value = null,
+                });
+            }
+
+            field_index = group_end_index;
+        } else {
+            // Regular field
+            var field_name = field.name.lookup(t.comp);
+            if (field.name_tok == 0) {
+                field_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{unnamed_field_count});
+                unnamed_field_count += 1;
+                try t.anonymous_record_field_names.put(t.gpa, .{
+                    .parent = base.qt,
+                    .field = field.qt,
+                }, field_name);
+            }
+
+            // Check if this is a flexible array member
+            const field_type = if (blk: {
+                if (field_index != record_ty.fields.len - 1 and container_kind != .@"union") break :blk false;
+                const array_ty = field.qt.get(t.comp, .array) orelse break :blk false;
+                if (array_ty.len != .incomplete and (array_ty.len != .fixed or array_ty.len.fixed != 0)) break :blk false;
+                break :blk true;
+            }) flexible: {
+                const array_ty = field.qt.get(t.comp, .array).?;
+                const elem_type = try t.transType(scope, array_ty.elem, field.name_tok);
+                const zero_array = try ZigTag.array_type.create(t.arena, .{ .len = 0, .elem_type = elem_type });
+
+                const member_name = field_name;
+                field_name = try std.fmt.allocPrint(t.arena, "_{s}", .{field_name});
+
+                const member = try t.createFlexibleMemberFn(member_name, field_name);
+                try functions.append(member);
+
+                break :flexible zero_array;
+            } else try t.transType(scope, field.qt, field.name_tok);
+
+            try fields.append(.{
+                .name = field_name,
+                .type = field_type,
+                .alignment = null,
+                .default_value = if (container_kind == .@"struct")
+                    try t.createZeroValueNode(field.qt, field_type, .no_as)
+                else
+                    null,
+            });
+
+            field_index += 1;
+        }
+    }
+
+    const container_payload = try t.arena.create(ast.Payload.Container);
+    container_payload.* = .{
+        .base = .{ .tag = container_kind },
+        .data = .{
+            .layout = .@"extern",
+            .fields = try t.arena.dupe(ast.Payload.Container.Field, fields.items),
+            .decls = try t.arena.dupe(ZigNode, functions.items),
+        },
+    };
+    return ZigNode.initPayload(&container_payload.base);
+}
+
+fn createBitfieldPackedStruct(t: *Translator, bitfields: []const aro.Type.Record.Field, base: anytype) TransError!ZigNode {
+    var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, bitfields.len + 1);
+    defer fields.deinit();
+
+    var unnamed_field_count: u32 = 0;
+    var used_bits: u64 = 0;
+    var named_bits: u64 = 0;
+
+    // Determine storage unit size from the first field's type
+    const storage_unit_bits = if (bitfields.len > 0) bitfields[0].qt.bitSizeof(t.comp) else 32;
+
+    for (bitfields) |field| {
+        const bit_width = field.bit_width.unpack().?;
+        if (bit_width == 0) continue; // Skip zero-width bitfields
+
+        used_bits += bit_width;
+
+        // For anonymous bitfields with actual width (like `:23`), just count them
+        if (field.name_tok == 0 and bit_width > 0) {
+            continue;
+        }
+
+        var field_name = field.name.lookup(t.comp);
+        if (field.name_tok == 0) {
+            field_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{unnamed_field_count});
+            unnamed_field_count += 1;
+            try t.anonymous_record_field_names.put(t.gpa, .{
+                .parent = base.qt,
+                .field = field.qt,
+            }, field_name);
+        }
+
+        const is_signed = t.signedness(field.qt) == .signed;
+        const bitfield_type = try t.createBitfieldType(bit_width, is_signed);
+
+        try fields.append(.{
+            .name = field_name,
+            .type = bitfield_type,
+            .alignment = null,
+            .default_value = ZigTag.zero_literal.init(),
+        });
+
+        named_bits += bit_width;
+    }
+
+    // Add padding field for anonymous bitfields
+    const anonymous_bits = used_bits - named_bits;
+    if (anonymous_bits > 0) {
+        const padding_type = try t.createBitfieldType(anonymous_bits, false);
+
+        try fields.append(.{
+            .name = "_anon_pad",
+            .type = padding_type,
+            .alignment = null,
+            .default_value = ZigTag.zero_literal.init(),
+        });
+    }
+
+    // Add final padding if needed to reach storage unit boundary
+    if (used_bits < storage_unit_bits) {
+        const padding_bits = storage_unit_bits - used_bits;
+        const padding_type = try t.createBitfieldType(padding_bits, false);
+
+        try fields.append(.{
+            .name = "_pad",
+            .type = padding_type,
+            .alignment = null,
+            .default_value = ZigTag.zero_literal.init(),
+        });
+    }
+
+    const container_payload = try t.arena.create(ast.Payload.Container);
+    container_payload.* = .{
+        .base = .{ .tag = .@"struct" },
+        .data = .{
+            .layout = .@"packed",
+            .fields = try t.arena.dupe(ast.Payload.Container.Field, fields.items),
+            .decls = &.{},
+        },
+    };
+    return ZigNode.initPayload(&container_payload.base);
 }
 
 fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!void {
