@@ -172,7 +172,7 @@ pub const Options = struct {
     module_libs: bool,
 };
 
-pub fn translate(options: Options) ![]u8 {
+pub fn translate(options: Options) mem.Allocator.Error![]u8 {
     const gpa = options.gpa;
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
@@ -217,23 +217,23 @@ pub fn translate(options: Options) ![]u8 {
 
     try translator.global_scope.processContainerMemberFns();
 
-    var buf: std.ArrayList(u8) = .init(gpa);
-    defer buf.deinit();
+    var allocating: std.Io.Writer.Allocating = .init(gpa);
+    defer allocating.deinit();
 
     if (options.module_libs) {
-        try buf.appendSlice(
+        allocating.writer.writeAll(
             \\pub const __builtin = @import("c_builtins");
             \\pub const __helpers = @import("helpers");
             \\
             \\
-        );
+        ) catch return error.OutOfMemory;
     } else {
-        try buf.appendSlice(
+        allocating.writer.writeAll(
             \\pub const __builtin = @import("c_builtins.zig");
             \\pub const __helpers = @import("helpers.zig");
             \\
             \\
-        );
+        ) catch return error.OutOfMemory;
     }
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
@@ -241,8 +241,8 @@ pub fn translate(options: Options) ![]u8 {
         gpa.free(zig_ast.source);
         zig_ast.deinit(gpa);
     }
-    try zig_ast.renderToArrayList(&buf, .{});
-    return buf.toOwnedSlice();
+    zig_ast.render(gpa, &allocating.writer, .{}) catch return error.OutOfMemory;
+    return allocating.toOwnedSlice();
 }
 
 fn prepopulateGlobalNameTable(t: *Translator) !void {
