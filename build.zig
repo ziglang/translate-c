@@ -30,6 +30,10 @@ pub fn build(b: *std.Build) void {
     translate_c_module.addImport("helpers", helpers);
     translate_c_module.addImport("c_builtins", c_builtins);
 
+    if (target.result.os.tag == .windows) {
+        translate_c_module.linkSystemLibrary("advapi32", .{});
+    }
+
     const translate_c_exe = b.addExecutable(.{
         .name = "translate-c",
         .root_module = translate_c_module,

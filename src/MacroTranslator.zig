@@ -387,7 +387,7 @@ fn zigifyEscapeSequences(mt: *MacroTranslator, slice: []const u8) ![]const u8 {
             break;
         }
     } else return source;
-    var bytes = try mt.t.arena.alloc(u8, source.len * 2);
+    const bytes = try mt.t.arena.alloc(u8, source.len * 2);
     var state: enum {
         start,
         escape,
@@ -497,7 +497,7 @@ fn zigifyEscapeSequences(mt: *MacroTranslator, slice: []const u8) ![]const u8 {
                         num += c - 'A' + 10;
                     },
                     else => {
-                        i += std.fmt.formatIntBuf(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
+                        i += std.fmt.printInt(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
                         num = 0;
                         if (c == '\\')
                             state = .escape
@@ -523,7 +523,7 @@ fn zigifyEscapeSequences(mt: *MacroTranslator, slice: []const u8) ![]const u8 {
                     };
                     num += c - '0';
                 } else {
-                    i += std.fmt.formatIntBuf(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
+                    i += std.fmt.printInt(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
                     num = 0;
                     count = 0;
                     if (c == '\\')
@@ -537,7 +537,7 @@ fn zigifyEscapeSequences(mt: *MacroTranslator, slice: []const u8) ![]const u8 {
         }
     }
     if (state == .hex or state == .octal) {
-        i += std.fmt.formatIntBuf(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
+        i += std.fmt.printInt(bytes[i..], num, 16, .lower, .{ .fill = '0', .width = 2 });
     }
 
     return bytes[0..i];
@@ -553,10 +553,10 @@ fn escapeUnprintables(mt: *MacroTranslator) ![]const u8 {
     const zigified = try mt.zigifyEscapeSequences(slice);
     if (std.unicode.utf8ValidateSlice(zigified)) return zigified;
 
-    const formatter = std.fmt.fmtSliceEscapeLower(zigified);
-    const encoded_size = @as(usize, @intCast(std.fmt.count("{s}", .{formatter})));
+    const formatter = std.ascii.hexEscape(zigified, .lower);
+    const encoded_size = @as(usize, @intCast(std.fmt.count("{f}", .{formatter})));
     const output = try mt.t.arena.alloc(u8, encoded_size);
-    return std.fmt.bufPrint(output, "{s}", .{formatter}) catch |err| switch (err) {
+    return std.fmt.bufPrint(output, "{f}", .{formatter}) catch |err| switch (err) {
         error.NoSpaceLeft => unreachable,
         else => |e| return e,
     };
@@ -577,7 +577,7 @@ fn parseCPrimaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
             } else {
                 mt.i += 1;
 
-                const str = try std.fmt.allocPrint(mt.t.arena, "0x{s}", .{std.fmt.fmtSliceHexLower(slice[1 .. slice.len - 1])});
+                const str = try std.fmt.allocPrint(mt.t.arena, "0x{x}", .{slice[1 .. slice.len - 1]});
                 return ZigTag.integer_literal.create(mt.t.arena, str);
             }
         },

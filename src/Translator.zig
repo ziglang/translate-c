@@ -172,7 +172,7 @@ pub const Options = struct {
     module_libs: bool,
 };
 
-pub fn translate(options: Options) ![]u8 {
+pub fn translate(options: Options) mem.Allocator.Error![]u8 {
     const gpa = options.gpa;
     var arena_allocator = std.heap.ArenaAllocator.init(gpa);
     defer arena_allocator.deinit();
@@ -217,23 +217,23 @@ pub fn translate(options: Options) ![]u8 {
 
     try translator.global_scope.processContainerMemberFns();
 
-    var buf: std.ArrayList(u8) = .init(gpa);
-    defer buf.deinit();
+    var allocating: std.Io.Writer.Allocating = .init(gpa);
+    defer allocating.deinit();
 
     if (options.module_libs) {
-        try buf.appendSlice(
+        allocating.writer.writeAll(
             \\pub const __builtin = @import("c_builtins");
             \\pub const __helpers = @import("helpers");
             \\
             \\
-        );
+        ) catch return error.OutOfMemory;
     } else {
-        try buf.appendSlice(
+        allocating.writer.writeAll(
             \\pub const __builtin = @import("c_builtins.zig");
             \\pub const __helpers = @import("helpers.zig");
             \\
             \\
-        );
+        ) catch return error.OutOfMemory;
     }
 
     var zig_ast = try ast.render(gpa, translator.global_scope.nodes.items);
@@ -241,8 +241,8 @@ pub fn translate(options: Options) ![]u8 {
         gpa.free(zig_ast.source);
         zig_ast.deinit(gpa);
     }
-    try zig_ast.renderToArrayList(&buf, .{});
-    return buf.toOwnedSlice();
+    zig_ast.render(gpa, &allocating.writer, .{}) catch return error.OutOfMemory;
+    return allocating.toOwnedSlice();
 }
 
 fn prepopulateGlobalNameTable(t: *Translator) !void {
@@ -1006,17 +1006,16 @@ fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAs
         const str_qt = message.qt(t.tree);
 
         const bytes = t.comp.interner.get(str_val.ref()).bytes;
-        var buf = std.ArrayList(u8).init(t.gpa);
-        defer buf.deinit();
+        var allocating: std.Io.Writer.Allocating = .init(t.gpa);
+        defer allocating.deinit();
 
-        try buf.appendSlice("\"static assertion failed \\");
+        allocating.writer.writeAll("\"static assertion failed \\") catch return error.OutOfMemory;
 
-        try buf.ensureUnusedCapacity(bytes.len);
-        try aro.Value.printString(bytes, str_qt, t.comp, buf.writer());
-        _ = buf.pop(); // printString adds a terminating " so we need to remove it
-        try buf.appendSlice("\\\"\"");
+        aro.Value.printString(bytes, str_qt, t.comp, &allocating.writer) catch return error.OutOfMemory;
+        allocating.writer.end -= 1; // printString adds a terminating " so we need to remove it
+        allocating.writer.writeAll("\\\"\"") catch return error.OutOfMemory;
 
-        break :str try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+        break :str try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
     } else try ZigTag.string_literal.create(t.arena, "\"static assertion failed\"");
 
     const assert_node = try ZigTag.static_assert.create(t.arena, .{ .lhs = condition, .rhs = diagnostic });
@@ -1027,11 +1026,11 @@ fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Err
     const asm_string = t.tree.value_map.get(global_asm.asm_str).?;
     const bytes = t.comp.interner.get(asm_string.ref()).bytes;
 
-    var buf = std.ArrayList(u8).init(t.gpa);
-    defer buf.deinit();
-    try aro.Value.printString(bytes, global_asm.asm_str.qt(t.tree), t.comp, buf.writer());
+    var allocating: std.Io.Writer.Allocating = try .initCapacity(t.gpa, bytes.len);
+    defer allocating.deinit();
+    aro.Value.printString(bytes, global_asm.asm_str.qt(t.tree), t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    const str_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+    const str_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
 
     const asm_node = try ZigTag.asm_simple.create(t.arena, str_node);
     const block = try ZigTag.block_single.create(t.arena, asm_node);
@@ -1045,11 +1044,10 @@ fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Err
 // ================
 
 fn getTypeStr(t: *Translator, qt: QualType) ![]const u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(t.gpa);
-    const w = buf.writer(t.gpa);
-    try qt.print(t.comp, w);
-    return t.arena.dupe(u8, buf.items);
+    var allocating: std.Io.Writer.Allocating = .init(t.gpa);
+    defer allocating.deinit();
+    qt.print(t.comp, &allocating.writer) catch return error.OutOfMemory;
+    return t.arena.dupe(u8, allocating.getWritten());
 }
 
 fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex) TypeError!ZigNode {
@@ -3353,12 +3351,11 @@ fn transFloatLiteral(
     const val = t.tree.value_map.get(literal_index).?;
     const float_literal = literal_index.get(t.tree).float_literal;
 
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer buf.deinit(t.gpa);
-    const w = buf.writer(t.gpa);
-    _ = try val.print(float_literal.qt, t.comp, w);
+    var allocating: std.Io.Writer.Allocating = .init(t.gpa);
+    defer allocating.deinit();
+    _ = val.print(float_literal.qt, t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    const float_lit_node = try ZigTag.float_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+    const float_lit_node = try ZigTag.float_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
     if (suppress_as == .no_as) {
         return t.maybeSuppressResult(used, float_lit_node);
     }
@@ -3398,13 +3395,12 @@ fn transNarrowStringLiteral(
     const val = t.tree.value_map.get(expr).?;
 
     const bytes = t.comp.interner.get(val.ref()).bytes;
-    var buf = std.ArrayList(u8).init(t.gpa);
-    defer buf.deinit();
+    var allocating: std.Io.Writer.Allocating = try .initCapacity(t.gpa, bytes.len);
+    defer allocating.deinit();
 
-    try buf.ensureUnusedCapacity(bytes.len);
-    try aro.Value.printString(bytes, literal.qt, t.comp, buf.writer());
+    aro.Value.printString(bytes, literal.qt, t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    return ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, buf.items));
+    return ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
 }
 
 /// Translate a string literal that is initializing an array. In general narrow string
@@ -3887,7 +3883,7 @@ fn createNumberNode(t: *Translator, num: anytype, num_kind: enum { int, float })
 
 fn createCharLiteralNode(t: *Translator, narrow: bool, val: u32) TransError!ZigNode {
     return ZigTag.char_literal.create(t.arena, if (narrow)
-        try std.fmt.allocPrint(t.arena, "'{'}'", .{std.zig.fmtEscapes(&.{@as(u8, @intCast(val))})})
+        try std.fmt.allocPrint(t.arena, "'{f}'", .{std.zig.fmtChar(&.{@as(u8, @intCast(val))})})
     else
         try std.fmt.allocPrint(t.arena, "'\\u{{{x}}}'", .{val}));
 }

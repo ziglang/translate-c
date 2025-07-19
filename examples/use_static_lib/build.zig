@@ -72,7 +72,7 @@ fn buildLibfoo(
         .root = b.path("libfoo"),
         .files = &.{ "add.c", "print.c" },
     });
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "foo",
         .root_module = mod,
     });
