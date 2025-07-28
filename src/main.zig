@@ -159,6 +159,12 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     var pp = try aro.Preprocessor.initDefault(d.comp);
     defer pp.deinit();
 
+    var name_buf: [std.fs.max_name_bytes]u8 = undefined;
+    var opt_dep_file = try d.initDepFile(source, &name_buf);
+    defer if (opt_dep_file) |*dep_file| dep_file.deinit(pp.gpa);
+
+    if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
+
     try pp.preprocessSources(&.{ source, builtin_macros, user_macros });
 
     var c_tree = try pp.parse();
@@ -167,6 +173,22 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     if (d.diagnostics.errors != 0) {
         if (fast_exit) process.exit(1);
         return error.FatalError;
+    }
+
+    var out_buf: [4096]u8 = undefined;
+    if (opt_dep_file) |dep_file| {
+        const dep_file_name = try d.getDepFileName(source, out_buf[0..std.fs.max_name_bytes]);
+
+        const file = if (dep_file_name) |path|
+            d.comp.cwd.createFile(path, .{}) catch |er|
+                return d.fatal("unable to create dependency file '{s}': {s}", .{ path, aro.Driver.errorDescription(er) })
+        else
+            std.fs.File.stdout();
+        defer if (dep_file_name != null) file.close();
+
+        var file_writer = file.writer(&out_buf);
+        dep_file.write(&file_writer.interface) catch
+            return d.fatal("unable to write dependency file: {s}", .{aro.Driver.errorDescription(file_writer.err.?)});
     }
 
     const rendered_zig = try Translator.translate(.{
@@ -196,7 +218,6 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         out_file_path = path;
     }
 
-    var out_buf: [4096]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
     out_writer.interface.writeAll(rendered_zig) catch
         return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(out_writer.err.?) });
