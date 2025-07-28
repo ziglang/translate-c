@@ -71,12 +71,14 @@ pub fn initInner(
     // Try our best to get a reasonable name; we need one to name the steps and the output file.
     const name = options.name orelse std.fs.path.stem(options.c_source_file.getDisplayName());
 
-    // We start with the basic command: 'path/to/translate-c in.c -o out.zig'
+    // We start with the basic command: 'path/to/translate-c in.c -o out.zig -MD -MV -MF deps.d'
     const run = b.addRunArtifact(tc_conf.exe);
     run.setName(b.fmt("translate-c {s}", .{name}));
     run.addFileArg(options.c_source_file);
     run.addArg("-o");
     const output_file = run.addOutputFileArg(b.fmt("{s}.zig", .{name}));
+    run.addArgs(&.{ "-MD", "-MV", "-MF" });
+    _ = run.addDepFileOutputArg("deps.d");
     // Now we are free to add extra args to `run` as needed.
 
     const mod = b.createModule(.{

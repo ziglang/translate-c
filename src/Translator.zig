@@ -3883,7 +3883,7 @@ fn createNumberNode(t: *Translator, num: anytype, num_kind: enum { int, float })
 
 fn createCharLiteralNode(t: *Translator, narrow: bool, val: u32) TransError!ZigNode {
     return ZigTag.char_literal.create(t.arena, if (narrow)
-        try std.fmt.allocPrint(t.arena, "'{f}'", .{std.zig.fmtChar(&.{@as(u8, @intCast(val))})})
+        try std.fmt.allocPrint(t.arena, "'{f}'", .{std.zig.fmtChar(@as(u8, @intCast(val)))})
     else
         try std.fmt.allocPrint(t.arena, "'\\u{{{x}}}'", .{val}));
 }
