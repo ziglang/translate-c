@@ -122,8 +122,6 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         var macro_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer macro_buf.deinit(gpa);
 
-        try macro_buf.appendSlice(gpa, "#define __TRANSLATE_C__ 1\n");
-
         var discard_buf: [256]u8 = undefined;
         var discarding: std.io.Writer.Discarding = .init(&discard_buf);
         assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args));
@@ -161,7 +159,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     var name_buf: [std.fs.max_name_bytes]u8 = undefined;
     var opt_dep_file = try d.initDepFile(source, &name_buf);
-    defer if (opt_dep_file) |*dep_file| dep_file.deinit(pp.gpa);
+    defer if (opt_dep_file) |*dep_file| dep_file.deinit(d.comp.gpa);
 
     if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
 
@@ -219,8 +217,10 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     }
 
     var out_writer = out_file.writer(&out_buf);
-    out_writer.interface.writeAll(rendered_zig) catch
-        return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(out_writer.err.?) });
+    out_writer.interface.writeAll(rendered_zig) catch {};
+    out_writer.interface.flush() catch {};
+    if (out_writer.err) |write_err|
+        return d.fatal("failed to write result to '{s}': {s}", .{ out_file_path, aro.Driver.errorDescription(write_err) });
 
     if (!module_libs) {
         const dest_path = if (d.output_name) |path| std.fs.path.dirname(path) else null;

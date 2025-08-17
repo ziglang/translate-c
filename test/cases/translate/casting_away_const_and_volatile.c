@@ -15,10 +15,10 @@ void baz(volatile int *a) {
 // pub export fn bar(arg_a: [*c]const c_int) void {
 //     var a = arg_a;
 //     _ = &a;
-//     foo(@constCast(@ptrCast(@alignCast(a))));
+//     foo(@ptrCast(@alignCast(@constCast(a))));
 // }
 // pub export fn baz(arg_a: [*c]volatile c_int) void {
 //     var a = arg_a;
 //     _ = &a;
-//     foo(@volatileCast(@ptrCast(@alignCast(a))));
+//     foo(@ptrCast(@alignCast(@volatileCast(a))));
 // }
