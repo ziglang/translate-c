@@ -125,6 +125,8 @@ pub fn initInner(
         run.addArg("-fmodule-libs");
     }
 
+    detectNixCFlags(b, run);
+
     return .{
         .output_file = output_file,
         .mod = mod,
@@ -218,6 +220,30 @@ fn detectLibCDirs(b: *Build, target: Build.ResolvedTarget) std.zig.LibCDirs {
         ) catch |err| std.debug.panic("failed to locate libc: {s}", .{@errorName(err)});
     }
     return gop.value_ptr.*;
+}
+
+/// Picks up NIX_CFLAGS_COMPILE and appends it to the run step,
+/// if present
+fn detectNixCFlags(b: *Build, run: *Build.Step.Run) void {
+    const nixCFlagsRaw = std.process.getEnvVarOwned(b.allocator, "NIX_CFLAGS_COMPILE") catch return;
+    defer b.allocator.free(nixCFlagsRaw);
+
+    // The flag is formatted like this:
+    // " -frandom-seed=1234 -isystem /nix/store/...."
+    // the space in front is undesirable for us, so we need to trim it
+    const nixCFlags = std.mem.trim(u8, nixCFlagsRaw, " ");
+
+    // The translate-c binary will forward arguments to arocc,
+    // so we can very conveniently space-seperate the env var
+    // and append it to the run arguments
+    // Note that this WILL append theoretically superfluous
+    // flags like -frandom-seed, and others if nix adds them
+    // in the future. We may consider filtering to just
+    // flags that we care about, like -isystem
+    var iter = std.mem.tokenizeScalar(u8, nixCFlags, ' ');
+    while (iter.next()) |arg| {
+        run.addArg(arg);
+    }
 }
 
 const std = @import("std");
