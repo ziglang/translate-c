@@ -161,7 +161,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     var name_buf: [std.fs.max_name_bytes]u8 = undefined;
     var opt_dep_file = try d.initDepFile(source, &name_buf);
-    defer if (opt_dep_file) |*dep_file| dep_file.deinit(pp.gpa);
+    defer if (opt_dep_file) |*dep_file| dep_file.deinit(d.comp.gpa);
 
     if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
 

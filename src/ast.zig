@@ -798,7 +798,7 @@ pub const Payload = struct {
 pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
     var ctx: Context = .{
         .gpa = gpa,
-        .buf = std.ArrayList(u8).init(gpa),
+        .buf = std.array_list.Managed(u8).init(gpa),
     };
     defer ctx.buf.deinit();
     defer ctx.nodes.deinit(gpa);
@@ -822,7 +822,7 @@ pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
     });
 
     const root_members = blk: {
-        var result = std.ArrayList(NodeIndex).init(gpa);
+        var result = std.array_list.Managed(NodeIndex).init(gpa);
         defer result.deinit();
 
         for (nodes) |node| {
@@ -859,7 +859,7 @@ const TokenTag = std.zig.Token.Tag;
 
 const Context = struct {
     gpa: Allocator,
-    buf: std.ArrayList(u8),
+    buf: std.array_list.Managed(u8),
     nodes: std.zig.Ast.NodeList = .{},
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
     tokens: std.zig.Ast.TokenList = .{},
@@ -1687,7 +1687,7 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             }
             const l_brace = try c.addToken(.l_brace, "{");
 
-            var stmts = std.ArrayList(NodeIndex).init(c.gpa);
+            var stmts = std.array_list.Managed(NodeIndex).init(c.gpa);
             defer stmts.deinit();
             for (payload.stmts) |stmt| {
                 const res = (try renderNodeOpt(c, stmt)) orelse continue;
@@ -3035,9 +3035,9 @@ fn renderMacroFunc(c: *Context, node: Node) !NodeIndex {
     });
 }
 
-fn renderParams(c: *Context, params: []Payload.Param, is_var_args: bool) !std.ArrayList(NodeIndex) {
+fn renderParams(c: *Context, params: []Payload.Param, is_var_args: bool) !std.array_list.Managed(NodeIndex) {
     _ = try c.addToken(.l_paren, "(");
-    var rendered = try std.ArrayList(NodeIndex).initCapacity(c.gpa, @max(params.len, 1));
+    var rendered = try std.array_list.Managed(NodeIndex).initCapacity(c.gpa, @max(params.len, 1));
     errdefer rendered.deinit();
 
     for (params, 0..) |param, i| {
