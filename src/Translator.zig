@@ -499,11 +499,12 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             break :init ZigTag.opaque_literal.init();
         }
 
-        var fields = try std.ArrayList(ast.Payload.Container.Field).initCapacity(t.gpa, record_ty.fields.len);
-        defer fields.deinit();
+        var fields: std.ArrayList(ast.Payload.Container.Field) = .empty;
+        defer fields.deinit(t.gpa);
+        try fields.ensureUnusedCapacity(t.gpa, record_ty.fields.len);
 
-        var functions = std.ArrayList(ZigNode).init(t.gpa);
-        defer functions.deinit();
+        var functions: std.ArrayList(ZigNode) = .empty;
+        defer functions.deinit(t.gpa);
 
         var unnamed_field_count: u32 = 0;
 
@@ -568,7 +569,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
                     field_name = try std.fmt.allocPrint(t.arena, "_{s}", .{field_name});
 
                     const member = try t.createFlexibleMemberFn(member_name, field_name);
-                    try functions.append(member);
+                    try functions.append(t.gpa, member);
 
                     break :field_type zero_array;
                 }
@@ -610,7 +611,7 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             const padding_bits = record_ty.layout.?.size_bits;
             const alignment_bits = record_ty.layout.?.field_alignment_bits;
 
-            try fields.append(.{
+            try fields.append(t.gpa, .{
                 .name = "_padding",
                 .type = try ZigTag.type.create(t.arena, try std.fmt.allocPrint(t.arena, "u{d}", .{padding_bits})),
                 .alignment = @divExact(alignment_bits, 8),
@@ -1015,7 +1016,7 @@ fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAs
         allocating.writer.end -= 1; // printString adds a terminating " so we need to remove it
         allocating.writer.writeAll("\\\"\"") catch return error.OutOfMemory;
 
-        break :str try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
+        break :str try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.written()));
     } else try ZigTag.string_literal.create(t.arena, "\"static assertion failed\"");
 
     const assert_node = try ZigTag.static_assert.create(t.arena, .{ .lhs = condition, .rhs = diagnostic });
@@ -1030,7 +1031,7 @@ fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Err
     defer allocating.deinit();
     aro.Value.printString(bytes, global_asm.asm_str.qt(t.tree), t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    const str_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
+    const str_node = try ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.written()));
 
     const asm_node = try ZigTag.asm_simple.create(t.arena, str_node);
     const block = try ZigTag.block_single.create(t.arena, asm_node);
@@ -1047,7 +1048,7 @@ fn getTypeStr(t: *Translator, qt: QualType) ![]const u8 {
     var allocating: std.Io.Writer.Allocating = .init(t.gpa);
     defer allocating.deinit();
     qt.print(t.comp, &allocating.writer) catch return error.OutOfMemory;
-    return t.arena.dupe(u8, allocating.getWritten());
+    return t.arena.dupe(u8, allocating.written());
 }
 
 fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex) TypeError!ZigNode {
@@ -1799,8 +1800,8 @@ fn transSwitch(t: *Translator, scope: *Scope, switch_stmt: Node.SwitchStmt) Tran
     defer cond_scope.deinit();
     const switch_expr = try t.transExpr(&cond_scope.base, switch_stmt.cond, .used);
 
-    var cases = std.ArrayList(ZigNode).init(t.gpa);
-    defer cases.deinit();
+    var cases: std.ArrayList(ZigNode) = .empty;
+    defer cases.deinit(t.gpa);
     var has_default = false;
 
     const body_node = switch_stmt.body.get(t.tree);
@@ -1813,21 +1814,21 @@ fn transSwitch(t: *Translator, scope: *Scope, switch_stmt: Node.SwitchStmt) Tran
     for (body, 0..) |stmt, i| {
         switch (stmt.get(t.tree)) {
             .case_stmt => {
-                var items = std.ArrayList(ZigNode).init(t.gpa);
-                defer items.deinit();
+                var items: std.ArrayList(ZigNode) = .empty;
+                defer items.deinit(t.gpa);
                 const sub = try t.transCaseStmt(base_scope, stmt, &items);
                 const res = try t.transSwitchProngStmt(base_scope, sub, body[i..]);
 
                 if (items.items.len == 0) {
                     has_default = true;
                     const switch_else = try ZigTag.switch_else.create(t.arena, res);
-                    try cases.append(switch_else);
+                    try cases.append(t.gpa, switch_else);
                 } else {
                     const switch_prong = try ZigTag.switch_prong.create(t.arena, .{
                         .cases = try t.arena.dupe(ZigNode, items.items),
                         .cond = res,
                     });
-                    try cases.append(switch_prong);
+                    try cases.append(t.gpa, switch_prong);
                 }
             },
             .default_stmt => |default_stmt| {
@@ -1843,7 +1844,7 @@ fn transSwitch(t: *Translator, scope: *Scope, switch_stmt: Node.SwitchStmt) Tran
                 const res = try t.transSwitchProngStmt(base_scope, sub, body[i..]);
 
                 const switch_else = try ZigTag.switch_else.create(t.arena, res);
-                try cases.append(switch_else);
+                try cases.append(t.gpa, switch_else);
             },
             else => {}, // collected in transSwitchProngStmt
         }
@@ -1851,7 +1852,7 @@ fn transSwitch(t: *Translator, scope: *Scope, switch_stmt: Node.SwitchStmt) Tran
 
     if (!has_default) {
         const else_prong = try ZigTag.switch_else.create(t.arena, ZigTag.empty_block.init());
-        try cases.append(else_prong);
+        try cases.append(t.gpa, else_prong);
     }
 
     const switch_node = try ZigTag.@"switch".create(t.arena, .{
@@ -1896,7 +1897,7 @@ fn transCaseStmt(
                     break :blk try ZigTag.ellipsis3.create(t.arena, .{ .lhs = start_node, .rhs = end_node });
                 } else try t.transExpr(scope, case_stmt.start, .used);
 
-                try items.append(expr);
+                try items.append(t.gpa, expr);
                 sub = case_stmt.body;
             },
             else => return sub,
@@ -3355,7 +3356,7 @@ fn transFloatLiteral(
     defer allocating.deinit();
     _ = val.print(float_literal.qt, t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    const float_lit_node = try ZigTag.float_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
+    const float_lit_node = try ZigTag.float_literal.create(t.arena, try t.arena.dupe(u8, allocating.written()));
     if (suppress_as == .no_as) {
         return t.maybeSuppressResult(used, float_lit_node);
     }
@@ -3400,7 +3401,7 @@ fn transNarrowStringLiteral(
 
     aro.Value.printString(bytes, literal.qt, t.comp, &allocating.writer) catch return error.OutOfMemory;
 
-    return ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.getWritten()));
+    return ZigTag.string_literal.create(t.arena, try t.arena.dupe(u8, allocating.written()));
 }
 
 /// Translate a string literal that is initializing an array. In general narrow string
@@ -3449,8 +3450,8 @@ fn transStringLiteralInitializer(
         const init_list = try t.arena.alloc(ZigNode, @intCast(num_inits));
         for (init_list, 0..) |*item, i| {
             const codepoint = switch (size) {
-                2 => @as(*const u16, @alignCast(@ptrCast(bytes.ptr + i * 2))).*,
-                4 => @as(*const u32, @alignCast(@ptrCast(bytes.ptr + i * 4))).*,
+                2 => @as(*const u16, @ptrCast(@alignCast(bytes.ptr + i * 2))).*,
+                4 => @as(*const u32, @ptrCast(@alignCast(bytes.ptr + i * 4))).*,
                 else => unreachable,
             };
             item.* = try t.createCharLiteralNode(false, codepoint);
@@ -3996,8 +3997,8 @@ fn createFlexibleMemberFn(
 // =================
 
 fn transMacros(t: *Translator) !void {
-    var tok_list = std.ArrayList(CToken).init(t.gpa);
-    defer tok_list.deinit();
+    var tok_list: std.ArrayList(CToken) = .empty;
+    defer tok_list.deinit(t.gpa);
 
     var pattern_list = try PatternList.init(t.gpa);
     defer pattern_list.deinit(t.gpa);
@@ -4009,7 +4010,7 @@ fn transMacros(t: *Translator) !void {
         }
 
         tok_list.items.len = 0;
-        try tok_list.ensureUnusedCapacity(macro.tokens.len);
+        try tok_list.ensureUnusedCapacity(t.gpa, macro.tokens.len);
         for (macro.tokens) |tok| {
             switch (tok.id) {
                 .invalid => continue,

@@ -162,36 +162,36 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
 }
 
 fn trailing(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scalar)) ![]const u8 {
-    var buf: std.ArrayList(u8) = .init(arena);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(arena);
     while (it.next()) |line| {
         if (line.len < 3) continue;
         const trimmed = line[3..];
-        if (buf.items.len != 0) try buf.append('\n');
-        try buf.appendSlice(trimmed);
+        if (buf.items.len != 0) try buf.append(arena, '\n');
+        try buf.appendSlice(arena, trimmed);
     }
-    return try buf.toOwnedSlice();
+    return try buf.toOwnedSlice(arena);
 }
 
 fn trailingSplit(arena: std.mem.Allocator, it: *std.mem.TokenIterator(u8, .scalar)) ![]const []const u8 {
-    var out: std.ArrayList([]const u8) = .init(arena);
-    defer out.deinit();
-    var buf: std.ArrayList(u8) = .init(arena);
-    defer buf.deinit();
+    var out: std.ArrayList([]const u8) = .empty;
+    defer out.deinit(arena);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(arena);
 
     while (it.next()) |line| {
         if (line.len <= 3) {
             if (buf.items.len != 0) {
-                try out.append(try buf.toOwnedSlice());
+                try out.append(arena, try buf.toOwnedSlice(arena));
             }
             continue;
         }
         const trimmed = line[3..];
-        if (buf.items.len != 0) try buf.append('\n');
-        try buf.appendSlice(trimmed);
+        if (buf.items.len != 0) try buf.append(arena, '\n');
+        try buf.appendSlice(arena, trimmed);
     }
     if (buf.items.len != 0) {
-        try out.append(try buf.toOwnedSlice());
+        try out.append(arena, try buf.toOwnedSlice(arena));
     }
-    return try out.toOwnedSlice();
+    return try out.toOwnedSlice(arena);
 }
