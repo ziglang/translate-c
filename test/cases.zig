@@ -103,7 +103,7 @@ const Case = struct {
 
 fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
     const max_file_size = 10 * 1024 * 1024;
-    const src = try entry.dir.readFileAlloc(b.allocator, entry.basename, max_file_size);
+    const src = try entry.dir.readFileAlloc(entry.basename, b.allocator, .limited(max_file_size));
 
     const input, const manifest = blk: {
         var start: ?usize = null;
