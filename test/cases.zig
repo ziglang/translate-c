@@ -121,7 +121,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
     };
 
     var target: ?std.Target.Query = null;
-    var skip_windows = true;
+    var skip_windows = false;
 
     var it = std.mem.tokenizeScalar(u8, manifest, '\n');
 
