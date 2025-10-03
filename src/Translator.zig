@@ -1549,6 +1549,10 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .goto_stmt, .computed_goto_stmt, .labeled_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
         },
+        .gnu_asm_simple,
+        => {
+            return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm inside function", .{});
+        },
         else => return t.transExprCoercing(scope, stmt, .unused),
     }
 }
