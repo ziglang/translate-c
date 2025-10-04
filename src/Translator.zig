@@ -866,12 +866,18 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
         break :blk null;
     };
 
+    // TODO actually set with @export/@extern
+    const linkage = variable.qt.linkage(t.comp);
+    if (linkage != .strong) {
+        try t.warn(scope, variable.name_tok, "TODO {s} linkage ignored", .{@tagName(linkage)});
+    }
+
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
         .is_const = is_const,
         .is_extern = is_extern,
-        .is_export = toplevel and variable.storage_class == .auto,
+        .is_export = toplevel and variable.storage_class == .auto and linkage == .strong,
         .is_threadlocal = variable.thread_local,
         .linksection_string = linksection_string,
         .alignment = alignment,
@@ -1361,13 +1367,19 @@ fn transFnType(
         }
     };
 
+    // TODO actually set with @export/@extern
+    const linkage = func_qt.linkage(t.comp);
+    if (linkage != .strong) {
+        try t.warn(scope, source_loc, "TODO {s} linkage ignored", .{@tagName(linkage)});
+    }
+
     const payload = try t.arena.create(ast.Payload.Func);
     payload.* = .{
         .base = .{ .tag = .func },
         .data = .{
             .is_pub = ctx.is_pub,
             .is_extern = ctx.is_extern,
-            .is_export = ctx.is_export,
+            .is_export = ctx.is_export and linkage == .strong,
             .is_inline = ctx.is_always_inline,
             .is_var_args = switch (func_ty.kind) {
                 .normal => false,
