@@ -49,6 +49,7 @@ pub fn lowerCases(
 
         const case_targets = if (case.target) |*t| t[0..1] else targets;
         for (case_targets) |case_target| {
+            if (case.skip_vector_index) continue;
             if (case.skip_windows and case_target.result.os.tag == .windows) {
                 continue;
             }
@@ -88,6 +89,7 @@ const Case = struct {
     input: []const u8,
     kind: Kind,
     skip_windows: bool,
+    skip_vector_index: bool,
 
     const Expect = enum { pass, fail };
 
@@ -122,6 +124,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
 
     var target: ?std.Target.Query = null;
     var skip_windows = false;
+    var skip_vector_index = false;
 
     var it = std.mem.tokenizeScalar(u8, manifest, '\n');
 
@@ -146,6 +149,8 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
             target = try .parse(.{ .arch_os_abi = value });
         } else if (std.mem.eql(u8, key, "skip_windows")) {
             skip_windows = std.mem.eql(u8, value, "true");
+        } else if (std.mem.eql(u8, key, "skip_vector_index")) {
+            skip_vector_index = std.mem.eql(u8, value, "true");
         } else return error.InvalidTestConfigOption;
     }
 
@@ -158,6 +163,7 @@ fn caseFromFile(b: *std.Build, entry: std.fs.Dir.Walker.Entry) !Case {
             .translate => .{ .translate = try trailingSplit(b.allocator, &it) },
         },
         .skip_windows = skip_windows,
+        .skip_vector_index = skip_vector_index,
     };
 }
 
