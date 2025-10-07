@@ -1181,17 +1181,8 @@ fn headFieldAlignment(t: *Translator, record_decl: aro.Type.Record) ?c_uint {
     const parent_ptr_alignment_bits = record_decl.layout.?.pointer_alignment_bits;
     const parent_ptr_alignment = parent_ptr_alignment_bits / bits_per_byte;
     var max_field_alignment_bits: u64 = 0;
-    for (record_decl.fields) |field| {
-        if (field.qt.getRecord(t.comp)) |field_record_decl| {
-            const child_record_alignment = field_record_decl.layout.?.field_alignment_bits;
-            if (child_record_alignment > max_field_alignment_bits)
-                max_field_alignment_bits = child_record_alignment;
-        } else {
-            const field_size = field.layout.size_bits;
-            if (field_size > max_field_alignment_bits)
-                max_field_alignment_bits = field_size;
-        }
-    }
+    for (record_decl.fields) |field|
+        max_field_alignment_bits = @max(max_field_alignment_bits, bits_per_byte * field.qt.alignof(t.comp));
     if (max_field_alignment_bits != parent_ptr_alignment_bits) {
         return parent_ptr_alignment;
     } else {
@@ -1243,10 +1234,7 @@ fn alignmentForField(
     // Records have a natural alignment when used as a field, and their size is
     // a multiple of this alignment value. For all other types, the natural alignment
     // is their size.
-    const field_natural_alignment_bits: u64 = if (field.qt.getRecord(t.comp)) |record|
-        record.layout.?.field_alignment_bits
-    else
-        field_size_bits;
+    const field_natural_alignment_bits: u64 = bits_per_byte * field.qt.alignof(t.comp);
     const rem_bits = field_offset_bits % field_natural_alignment_bits;
 
     // If there's a remainder, then the alignment is smaller than the field's
