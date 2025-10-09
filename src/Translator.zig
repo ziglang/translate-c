@@ -1549,8 +1549,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .goto_stmt, .computed_goto_stmt, .labeled_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
         },
-        .gnu_asm_simple,
-        => {
+        .gnu_asm_simple => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm inside function", .{});
         },
         else => return t.transExprCoercing(scope, stmt, .unused),
@@ -3685,6 +3684,10 @@ fn transTypeInfo(
     const operand = operand: {
         if (typeinfo.expr) |expr| {
             const operand = try t.transExpr(scope, expr, .used);
+            if (operand.tag() == .string_literal) {
+                const deref = try ZigTag.deref.create(t.arena, operand);
+                break :operand try ZigTag.typeof.create(t.arena, deref);
+            }
             break :operand try ZigTag.typeof.create(t.arena, operand);
         }
         break :operand try t.transType(scope, typeinfo.operand_qt, typeinfo.op_tok);
