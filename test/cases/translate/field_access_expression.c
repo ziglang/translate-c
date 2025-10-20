@@ -9,6 +9,7 @@ void foo(void) {
     a.b;
     c->b;
 }
+#define invalid(a, name) (a.name)
 
 // translate
 //
@@ -33,3 +34,5 @@ void foo(void) {
 // pub inline fn DOT() @TypeOf(a.b) {
 //     return a.b;
 // }
+//
+// pub const invalid = @compileError("unable to translate C expr: field access using macro parameter");
