@@ -82,12 +82,11 @@ pub fn getMangle(t: *Translator) u32 {
 
 /// Convert an `aro.Source.Location` to a 'file:line:column' string.
 pub fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
-    const source = t.comp.getSource(loc.id);
-    const line_col = source.lineCol(loc);
-    const filename = source.path;
+    const expanded = loc.expand(t.comp);
+    const filename = expanded.path;
 
-    const line = source.physicalLine(loc);
-    const col = line_col.col;
+    const line = expanded.line_no;
+    const col = expanded.col;
 
     return std.fmt.allocPrint(t.arena, "{s}:{d}:{d}", .{ filename, line, col });
 }
@@ -307,7 +306,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
     }
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (!t.isSelfDefinedMacro(name, macro)) {
             try t.global_names.put(t.gpa, name, {});
         }
@@ -1087,6 +1086,17 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             .double => return ZigTag.type.create(t.arena, "f64"),
             .long_double => return ZigTag.type.create(t.arena, "c_longdouble"),
             .float128 => return ZigTag.type.create(t.arena, "f128"),
+            .bf16,
+            .float32,
+            .float64,
+            .float32x,
+            .float64x,
+            .float128x,
+            .dfloat32,
+            .dfloat64,
+            .dfloat128,
+            .dfloat64x,
+            => return t.fail(error.UnsupportedType, source_loc, "TODO support atomic type: '{s}'", .{try t.getTypeStr(qt)}),
         },
         .pointer => |pointer_ty| {
             const child_qt = pointer_ty.child;
@@ -4011,7 +4021,7 @@ fn transMacros(t: *Translator) !void {
     defer pattern_list.deinit(t.gpa);
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
