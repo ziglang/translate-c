@@ -540,6 +540,13 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
                 break :init ZigTag.opaque_literal.init();
             }
 
+            // Demote record to opaque if it contains an opaque field
+            if (t.typeWasDemotedToOpaque(field.qt)) {
+                try t.opaque_demotes.put(t.gpa, base.qt, {});
+                try t.warn(scope, field_loc, "{s} demoted to opaque type - has opaque field", .{container_kind_name});
+                break :init ZigTag.opaque_literal.init();
+            }
+
             var field_name = field.name.lookup(t.comp);
             if (field.name_tok == 0) {
                 field_name = try std.fmt.allocPrint(t.arena, "unnamed_{d}", .{unnamed_field_count});
@@ -1470,18 +1477,7 @@ fn typeIsOpaque(t: *Translator, qt: QualType) bool {
 }
 
 fn typeWasDemotedToOpaque(t: *Translator, qt: QualType) bool {
-    const base = qt.base(t.comp);
-    switch (base.type) {
-        .@"struct", .@"union" => |record_ty| {
-            if (t.opaque_demotes.contains(base.qt)) return true;
-            for (record_ty.fields) |field| {
-                if (t.typeWasDemotedToOpaque(field.qt)) return true;
-            }
-            return false;
-        },
-        .@"enum" => return t.opaque_demotes.contains(base.qt),
-        else => return false,
-    }
+    return t.opaque_demotes.contains(qt);
 }
 
 fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
