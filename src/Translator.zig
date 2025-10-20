@@ -138,7 +138,11 @@ pub fn failDeclExtra(
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
-    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg });
+    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{
+        .actual = name,
+        .mangled = fail_msg,
+        .local = scope.id != .root,
+    });
 
     const str = try t.locStr(loc);
     const location_comment = try std.fmt.allocPrint(t.arena, "// {s}", .{str});
