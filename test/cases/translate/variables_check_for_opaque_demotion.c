@@ -14,7 +14,7 @@ int main(void) {
 // pub const a = @compileError("non-extern variable has opaque type");
 //
 // pub export fn main() c_int {
-//     pub const b = @compileError("local variable has opaque type");
+//     const b = if (true) @compileError("local variable has opaque type");
 //     _ = &b;
 //     return 0;
 // }

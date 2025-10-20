@@ -12,6 +12,6 @@ void initialize(void) {
 // warning: struct demoted to opaque type - has bitfield
 // pub const struct_my_struct = opaque {};
 // pub export fn initialize() void {
-//     pub const S = @compileError("local variable has opaque type");
+//     const S = if (true) @compileError("local variable has opaque type");
 //     _ = &S;
 // }
