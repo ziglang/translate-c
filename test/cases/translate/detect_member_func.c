@@ -8,6 +8,7 @@ int baz(Foo *foo);
 int libsomething_quux(Foo *foo);
 int foo1_bar(Foo *foo);
 int foo2_bar(Foo *foo);
+int foo3_(Foo *foo);
 
 typedef union {
     int foo;
@@ -39,6 +40,7 @@ int opa_foo2_bar(OpaFoo *foo);
 // pub extern fn libsomething_quux(foo: [*c]Foo) c_int;
 // pub extern fn foo1_bar(foo: [*c]Foo) c_int;
 // pub extern fn foo2_bar(foo: [*c]Foo) c_int;
+// pub extern fn foo3_(foo: [*c]Foo) c_int;
 // pub const UFoo = extern union {
 //     foo: c_int,
 //     numb: f32,
