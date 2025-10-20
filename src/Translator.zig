@@ -307,7 +307,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
     }
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (!t.isSelfDefinedMacro(name, macro)) {
             try t.global_names.put(t.gpa, name, {});
         }
@@ -1082,6 +1082,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             .uint128 => return ZigTag.type.create(t.arena, "u128"),
         },
         .float => |float_ty| switch (float_ty) {
+            .bf16 => return t.fail(error.UnsupportedType, source_loc, "TODO bf16", .{}),
             .fp16, .float16 => return ZigTag.type.create(t.arena, "f16"),
             .float => return ZigTag.type.create(t.arena, "f32"),
             .double => return ZigTag.type.create(t.arena, "f64"),
@@ -4011,7 +4012,7 @@ fn transMacros(t: *Translator) !void {
     defer pattern_list.deinit(t.gpa);
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
