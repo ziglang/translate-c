@@ -101,7 +101,7 @@ pub fn initInner(
         // than Linux due to deficiencies in Aro's toolchains for non-Linux targets.
         if (!options.target.query.isNative() or options.target.result.os.tag != .linux) {
             run.addArg("-nostdlibinc"); // Aro should still check its builtin dir, but we're providing everything else
-            const libc = detectLibCDirs(b, options.target);
+            const libc = detectLibCDirs(b, &options.target);
             for (libc.libc_include_dir_list) |include_dir| {
                 appendIncludeArg(run, "-isystem", .{ .cwd_relative = include_dir });
             }
@@ -116,6 +116,24 @@ pub fn initInner(
         }
     } else {
         run.addArg("-nostdinc");
+    }
+
+    if (options.target.query.isNativeOs() and options.target.query.isNativeAbi() and options.link_libc) {
+        const paths = std.zig.system.NativePaths.detect(b.graph.arena, &options.target.result) catch |err| {
+            std.debug.panic("failed to detect native system paths: {t}", .{err});
+        };
+        for (paths.warnings.items) |warning| {
+            std.log.warn("{s}", .{warning});
+        }
+        for (paths.include_dirs.items) |include_dir| {
+            appendIncludeArg(run, "-isystem", .{ .cwd_relative = include_dir });
+        }
+        for (paths.framework_dirs.items) |framework_dir| {
+            appendIncludeArg(run, "-iframework", .{ .cwd_relative = framework_dir });
+        }
+        // `paths.rpaths` and `paths.lib_dirs` are intentionally omitted because Aro does not yet support
+        // the `-rpath` or `-L` flags. That's fine because Aro isn't doing any codegen, only parsing and
+        // semantic analysis, so only needs to know include paths.
     }
 
     switch (options.warnings) {
@@ -201,7 +219,7 @@ fn appendIncludeArg(run: *Build.Step.Run, arg: []const u8, path: Build.LazyPath)
 /// all of the test cases.
 ///
 /// This function assumes `link_libc == true`.
-fn detectLibCDirs(b: *Build, target: Build.ResolvedTarget) std.zig.LibCDirs {
+fn detectLibCDirs(b: *Build, target: *const Build.ResolvedTarget) std.zig.LibCDirs {
     // TODO: this is a bad solution. One of three things needs to happen:
     // * The Zig build system gets a better way to cache state like this
     // * Aro or translate-c starts performing this query itself
