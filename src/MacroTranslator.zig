@@ -825,6 +825,18 @@ fn parseCMulExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
         switch (mt.peek()) {
             .asterisk => {
                 mt.i += 1;
+                switch (mt.peek()) {
+                    .comma, .r_paren, .eof => {
+                        // This is probably a pointer type
+                        return ZigTag.c_pointer.create(mt.t.arena, .{
+                            .is_const = false,
+                            .is_volatile = false,
+                            .is_allowzero = false,
+                            .elem_type = node,
+                        });
+                    },
+                    else => {},
+                }
                 const lhs = try mt.macroIntFromBool(node);
                 const rhs = try mt.macroIntFromBool(try mt.parseCCastExpr(scope));
                 node = try ZigTag.mul.create(mt.t.arena, .{ .lhs = lhs, .rhs = rhs });
