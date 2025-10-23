@@ -3989,7 +3989,8 @@ fn createFlexibleMemberFn(
 
     // return @ptrCast(&self.*.<field_name>);
     const address_of = try ZigTag.address_of.create(t.arena, field_access);
-    const casted = try ZigTag.ptr_cast.create(t.arena, address_of);
+    const aligned = try ZigTag.align_cast.create(t.arena, address_of);
+    const casted = try ZigTag.ptr_cast.create(t.arena, aligned);
     const return_stmt = try ZigTag.@"return".create(t.arena, casted);
     const body = try ZigTag.block_single.create(t.arena, return_stmt);
 
