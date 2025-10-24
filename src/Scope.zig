@@ -289,6 +289,7 @@ pub const Root = struct {
 
                 const last_index = std.mem.lastIndexOf(u8, func_name, "_");
                 const last_name = if (last_index) |index| func_name[index + 1 ..] else continue;
+                if (last_name.len == 0) continue;
                 var same_count: u32 = 0;
                 const gop = try member_names.getOrPutValue(gpa, last_name, same_count);
                 if (gop.found_existing) {

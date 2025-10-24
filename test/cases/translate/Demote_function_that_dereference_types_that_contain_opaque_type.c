@@ -13,10 +13,8 @@ void deref(struct outer *s) {
 //
 // pub const struct_inner = opaque {};
 //
-// pub const struct_outer = extern struct {
-//     thing: c_int = 0,
-//     sub_struct: struct_inner = @import("std").mem.zeroes(struct_inner),
-// };
+// warning: struct demoted to opaque type - has opaque field
+// pub const struct_outer = opaque {};
 //
 // warning: unable to translate function, demoted to extern
 //

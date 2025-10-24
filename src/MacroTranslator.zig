@@ -825,6 +825,18 @@ fn parseCMulExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
         switch (mt.peek()) {
             .asterisk => {
                 mt.i += 1;
+                switch (mt.peek()) {
+                    .comma, .r_paren, .eof => {
+                        // This is probably a pointer type
+                        return ZigTag.c_pointer.create(mt.t.arena, .{
+                            .is_const = false,
+                            .is_volatile = false,
+                            .is_allowzero = false,
+                            .elem_type = node,
+                        });
+                    },
+                    else => {},
+                }
                 const lhs = try mt.macroIntFromBool(node);
                 const rhs = try mt.macroIntFromBool(try mt.parseCCastExpr(scope));
                 node = try ZigTag.mul.create(mt.t.arena, .{ .lhs = lhs, .rhs = rhs });
@@ -1126,6 +1138,11 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
         switch (mt.peek()) {
             .period => {
                 mt.i += 1;
+                const tok = mt.tokens[mt.i];
+                if (tok.id == .macro_param or tok.id == .macro_param_no_expand) {
+                    try mt.fail("unable to translate C expr: field access using macro parameter", .{});
+                    return error.ParseError;
+                }
                 const field_name = mt.tokSlice();
                 try mt.expect(.identifier);
 
@@ -1133,6 +1150,11 @@ fn parseCPostfixExprInner(mt: *MacroTranslator, scope: *Scope, type_name: ?ZigNo
             },
             .arrow => {
                 mt.i += 1;
+                const tok = mt.tokens[mt.i];
+                if (tok.id == .macro_param or tok.id == .macro_param_no_expand) {
+                    try mt.fail("unable to translate C expr: field access using macro parameter", .{});
+                    return error.ParseError;
+                }
                 const field_name = mt.tokSlice();
                 try mt.expect(.identifier);
 

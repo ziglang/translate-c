@@ -139,7 +139,11 @@ pub fn failDeclExtra(
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
-    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg });
+    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{
+        .actual = name,
+        .mangled = fail_msg,
+        .local = scope.id != .root,
+    });
 
     const str = try t.locStr(loc);
     const location_comment = try std.fmt.allocPrint(t.arena, "// {s}", .{str});
@@ -307,7 +311,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
     }
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (!t.isSelfDefinedMacro(name, macro)) {
             try t.global_names.put(t.gpa, name, {});
         }
@@ -534,6 +538,13 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             if (field.bit_width != .null) {
                 try t.opaque_demotes.put(t.gpa, base.qt, {});
                 try t.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
+                break :init ZigTag.opaque_literal.init();
+            }
+
+            // Demote record to opaque if it contains an opaque field
+            if (t.typeWasDemotedToOpaque(field.qt)) {
+                try t.opaque_demotes.put(t.gpa, base.qt, {});
+                try t.warn(scope, field_loc, "{s} demoted to opaque type - has opaque field", .{container_kind_name});
                 break :init ZigTag.opaque_literal.init();
             }
 
@@ -1082,6 +1093,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             .uint128 => return ZigTag.type.create(t.arena, "u128"),
         },
         .float => |float_ty| switch (float_ty) {
+            .bf16 => return t.fail(error.UnsupportedType, source_loc, "TODO bf16", .{}),
             .fp16, .float16 => return ZigTag.type.create(t.arena, "f16"),
             .float => return ZigTag.type.create(t.arena, "f32"),
             .double => return ZigTag.type.create(t.arena, "f64"),
@@ -1456,18 +1468,7 @@ fn typeIsOpaque(t: *Translator, qt: QualType) bool {
 }
 
 fn typeWasDemotedToOpaque(t: *Translator, qt: QualType) bool {
-    const base = qt.base(t.comp);
-    switch (base.type) {
-        .@"struct", .@"union" => |record_ty| {
-            if (t.opaque_demotes.contains(base.qt)) return true;
-            for (record_ty.fields) |field| {
-                if (t.typeWasDemotedToOpaque(field.qt)) return true;
-            }
-            return false;
-        },
-        .@"enum" => return t.opaque_demotes.contains(base.qt),
-        else => return false,
-    }
+    return t.opaque_demotes.contains(qt);
 }
 
 fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
@@ -3979,7 +3980,8 @@ fn createFlexibleMemberFn(
 
     // return @ptrCast(&self.*.<field_name>);
     const address_of = try ZigTag.address_of.create(t.arena, field_access);
-    const casted = try ZigTag.ptr_cast.create(t.arena, address_of);
+    const aligned = try ZigTag.align_cast.create(t.arena, address_of);
+    const casted = try ZigTag.ptr_cast.create(t.arena, aligned);
     const return_stmt = try ZigTag.@"return".create(t.arena, casted);
     const body = try ZigTag.block_single.create(t.arena, return_stmt);
 
@@ -4011,7 +4013,7 @@ fn transMacros(t: *Translator) !void {
     defer pattern_list.deinit(t.gpa);
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
