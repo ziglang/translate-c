@@ -24,6 +24,12 @@ int opa_foo_init(OpaFoo *foo);
 int opa_foo1_bar(OpaFoo foo);
 int opa_foo2_bar(OpaFoo *foo);
 
+typedef struct foo_quux FooQuux;
+
+FooQuux *foo_quux_new(void);
+int foo_quux_bar1(FooQuux *foo);
+int foo_quux_bar2_(FooQuux *foo);
+
 // translate
 //
 // pub const Foo = extern struct {
@@ -57,3 +63,10 @@ int opa_foo2_bar(OpaFoo *foo);
 // pub extern fn opa_foo_init(foo: ?*OpaFoo) c_int;
 // pub extern fn opa_foo1_bar(foo: OpaFoo) c_int;
 // pub extern fn opa_foo2_bar(foo: ?*OpaFoo) c_int;
+// pub const struct_foo_quux = opaque {
+//     pub const bar1 = foo_quux_bar1;
+//     pub const bar2_ = foo_quux_bar2_;
+// };
+// pub const FooQuux = struct_foo_quux;
+// pub extern fn foo_quux_bar1(foo: ?*FooQuux) c_int;
+// pub extern fn foo_quux_bar2_(foo: ?*FooQuux) c_int;

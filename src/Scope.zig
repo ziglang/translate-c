@@ -286,8 +286,11 @@ pub const Root = struct {
             var count: u32 = 0;
             for (members.member_fns.items) |func| {
                 const func_name = func.data.name.?;
+                var func_name_trimmed = func_name;
+                while (std.mem.endsWith(u8, func_name_trimmed, "_"))
+                    func_name_trimmed = func_name_trimmed[0 .. func_name_trimmed.len - 1];
 
-                const last_index = std.mem.lastIndexOf(u8, func_name, "_");
+                const last_index = std.mem.lastIndexOf(u8, func_name_trimmed, "_");
                 const last_name = if (last_index) |index| func_name[index + 1 ..] else continue;
                 var same_count: u32 = 0;
                 const gop = try member_names.getOrPutValue(gpa, last_name, same_count);
