@@ -3054,6 +3054,10 @@ fn transMemberAccess(
         .normal => member_access.base.qt(t.tree),
         .ptr => member_access.base.qt(t.tree).childType(t.comp),
     };
+    if (t.typeWasDemotedToOpaque(base_info)) {
+        return t.fail(error.UnsupportedTranslation, member_access.access_tok, "member access of demoted record", .{});
+    }
+
     const record = base_info.getRecord(t.comp).?;
     const field = record.fields[member_access.member_index];
     const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
