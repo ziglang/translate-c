@@ -14,6 +14,7 @@ void func(struct Foo *a, enum Bar **b);
 // pub const struct_Foo = extern struct {
 //     x: c_int = 0,
 //     y: c_int = 0,
+//     pub const func = __root.func;
 // };
 // pub const BarA: c_int = 0;
 // pub const BarB: c_int = 1;

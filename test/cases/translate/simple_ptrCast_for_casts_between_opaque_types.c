@@ -6,7 +6,9 @@ void function(struct opaque *opaque) {
 
 // translate
 //
-// pub const struct_opaque = opaque {};
+// pub const struct_opaque = opaque {
+//     pub const function = __root.function;
+// };
 // pub const struct_opaque_2 = opaque {};
 // pub export fn function(arg_opaque_1: ?*struct_opaque) void {
 //     var opaque_1 = arg_opaque_1;

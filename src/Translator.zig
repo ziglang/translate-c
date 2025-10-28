@@ -223,6 +223,11 @@ pub fn translate(options: Options) mem.Allocator.Error![]u8 {
     var allocating: std.Io.Writer.Allocating = .init(gpa);
     defer allocating.deinit();
 
+    allocating.writer.writeAll(
+        \\const __root = @This();
+        \\
+    ) catch return error.OutOfMemory;
+
     if (options.module_libs) {
         allocating.writer.writeAll(
             \\pub const __builtin = @import("c_builtins");
