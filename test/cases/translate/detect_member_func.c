@@ -26,7 +26,6 @@ int opa_foo2_bar(OpaFoo *foo);
 
 typedef struct foo_quux FooQuux;
 
-FooQuux *foo_quux_new(void);
 int foo_quux_bar1(FooQuux *foo);
 int foo_quux_bar2_(FooQuux *foo);
 
