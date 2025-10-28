@@ -247,6 +247,9 @@ pub const Node = extern union {
         /// comptime { if (!(lhs)) @compileError(rhs); }
         static_assert,
 
+        /// __root.<name>
+        root_ref,
+
         pub const last_no_payload_tag = Tag.@"break";
         pub const no_payload_count = @intFromEnum(last_no_payload_tag) + 1;
 
@@ -406,6 +409,7 @@ pub const Node = extern union {
                 .builtin_extern => Payload.Extern,
                 .helper_call => Payload.HelperCall,
                 .helper_ref => Payload.HelperRef,
+                .root_ref => Payload.RootRef,
             };
         }
 
@@ -798,6 +802,11 @@ pub const Payload = struct {
     };
 
     pub const HelperRef = struct {
+        base: Payload,
+        data: []const u8,
+    };
+
+    pub const RootRef = struct {
         base: Payload,
         data: []const u8,
     };
@@ -2190,6 +2199,15 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             });
         },
         .@"anytype" => unreachable, // Handled in renderParams
+        .root_ref => {
+            const payload = node.castTag(.root_ref).?.data;
+            const root_tok = try c.addNode(.{
+                .tag = .identifier,
+                .main_token = try c.addIdentifier("__root"),
+                .data = undefined,
+            });
+            return renderFieldAccess(c, root_tok, payload);
+        },
     }
 }
 
@@ -2512,6 +2530,7 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .sqrt,
         .trunc,
         .floor,
+        .root_ref,
         => {
             // no grouping needed
             return renderNode(c, node);
