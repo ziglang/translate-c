@@ -32,6 +32,8 @@ tree: *const Tree,
 comp: *aro.Compilation,
 /// The Preprocessor that produced the source for `tree`.
 pp: *const aro.Preprocessor,
+/// Should static functions be translated as `pub`.
+pub_static: bool,
 
 gpa: mem.Allocator,
 arena: mem.Allocator,
@@ -170,6 +172,7 @@ pub const Options = struct {
     pp: *const aro.Preprocessor,
     tree: *const aro.Tree,
     module_libs: bool,
+    pub_static: bool,
 };
 
 pub fn translate(options: Options) mem.Allocator.Error![]u8 {
@@ -186,6 +189,7 @@ pub fn translate(options: Options) mem.Allocator.Error![]u8 {
         .comp = options.comp,
         .pp = options.pp,
         .tree = options.tree,
+        .pub_static = options.pub_static,
     };
     translator.global_scope.* = Scope.Root.init(&translator);
     defer {
@@ -662,8 +666,6 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
 fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!void {
     const func_ty = function.qt.get(t.comp, .func).?;
 
-    const is_pub = scope.id == .root;
-
     const fn_name = t.tree.tokSlice(function.name_tok);
     if (scope.getAlias(fn_name) != null or t.global_scope.containsNow(fn_name))
         return; // Avoid processing this decl twice
@@ -680,7 +682,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
         .is_always_inline = is_always_inline,
         .is_extern = !has_body,
         .is_export = !function.static and has_body and !is_always_inline and !function.@"inline",
-        .is_pub = is_pub,
+        .is_pub = scope.id == .root and (!function.static or t.pub_static),
         .has_body = has_body,
         .cc = if (function.qt.getAttribute(t.comp, .calling_convention)) |some| switch (some.cc) {
             .c => .c,
