@@ -34,6 +34,8 @@ comp: *aro.Compilation,
 pp: *const aro.Preprocessor,
 /// Should static functions be translated as `pub`.
 pub_static: bool,
+/// Should function bodies be translated.
+func_bodies: bool,
 
 gpa: mem.Allocator,
 arena: mem.Allocator,
@@ -173,6 +175,7 @@ pub const Options = struct {
     tree: *const aro.Tree,
     module_libs: bool,
     pub_static: bool,
+    func_bodies: bool,
 };
 
 pub fn translate(options: Options) mem.Allocator.Error![]u8 {
@@ -190,6 +193,7 @@ pub fn translate(options: Options) mem.Allocator.Error![]u8 {
         .pp = options.pp,
         .tree = options.tree,
         .pub_static = options.pub_static,
+        .func_bodies = options.func_bodies,
     };
     translator.global_scope.* = Scope.Root.init(&translator);
     defer {
@@ -671,7 +675,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
         return; // Avoid processing this decl twice
 
     const fn_decl_loc = function.name_tok;
-    const has_body = function.body != null and func_ty.kind != .variadic;
+    const has_body = function.body != null and func_ty.kind != .variadic and t.func_bodies;
     if (function.body != null and func_ty.kind == .variadic) {
         try t.warn(scope, function.name_tok, "TODO unable to translate variadic function, demoted to extern", .{});
     }

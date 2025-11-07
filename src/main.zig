@@ -84,6 +84,8 @@ pub const usage =
     \\  -fno-module-libs    (default) Install libraries next to output file
     \\  -fpub-static        (default) translate static functions as pub
     \\  -fno-pub-static     Do not translate static functions as pub
+    \\  -ffunc-bodies       (default) translate function bodies
+    \\  -fno-func-bodies    Do not translate function bodies
     \\
     \\
 ;
@@ -93,6 +95,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     var module_libs = false;
     var pub_static = true;
+    var func_bodies = true;
 
     const aro_args = args: {
         var i: usize = 0;
@@ -119,6 +122,10 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
                 pub_static = true;
             } else if (mem.eql(u8, arg, "-fno-pub-static")) {
                 pub_static = false;
+            } else if (mem.eql(u8, arg, "-ffunc-bodies")) {
+                func_bodies = true;
+            } else if (mem.eql(u8, arg, "-fno-func-bodies")) {
+                func_bodies = false;
             } else {
                 i += 1;
             }
@@ -203,6 +210,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         .tree = &c_tree,
         .module_libs = module_libs,
         .pub_static = pub_static,
+        .func_bodies = func_bodies,
     });
     defer gpa.free(rendered_zig);
 
