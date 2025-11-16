@@ -1039,7 +1039,7 @@ fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAs
     try scope.appendNode(assert_node);
 }
 
-fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Error!void {
+fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.GlobalAsm) Error!void {
     const asm_string = t.tree.value_map.get(global_asm.asm_str).?;
     const bytes = t.comp.interner.get(asm_string.ref()).bytes;
 
@@ -1559,7 +1559,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .goto_stmt, .computed_goto_stmt, .labeled_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
         },
-        .gnu_asm_simple => {
+        .asm_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm inside function", .{});
         },
         else => return t.transExprCoercing(scope, stmt, .unused),
@@ -2220,7 +2220,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .default_stmt,
         .goto_stmt,
         .computed_goto_stmt,
-        .gnu_asm_simple,
+        .asm_stmt,
         .global_asm,
         .typedef,
         .struct_decl,

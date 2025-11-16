@@ -148,10 +148,8 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         error.OutOfMemory => return error.OutOfMemory,
         error.TooManyMultilibs => return d.fatal("found more than one multilib with the same priority", .{}),
     };
-    tc.defineSystemIncludes() catch |er| switch (er) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.AroIncludeNotFound => return d.fatal("unable to find Aro builtin headers", .{}),
-    };
+    try tc.defineSystemIncludes();
+    try d.comp.initSearchPath(d.includes.items, false);
 
     const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
         error.FileTooBig => return d.fatal("builtin macro source exceeded max size", .{}),
@@ -167,7 +165,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
 
-    try pp.preprocessSources(&.{ source, builtin_macros, user_macros });
+    try pp.preprocessSources(.{ .main = source, .builtin = builtin_macros, .command_line = user_macros });
 
     var c_tree = try pp.parse();
     defer c_tree.deinit();
