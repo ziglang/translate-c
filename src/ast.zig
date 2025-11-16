@@ -394,7 +394,8 @@ pub const Node = extern union {
                 .block => Payload.Block,
                 .c_pointer, .single_pointer => Payload.Pointer,
                 .array_type, .null_sentinel_array_type => Payload.Array,
-                .arg_redecl, .alias, .fail_decl => Payload.ArgRedecl,
+                .arg_redecl, .alias => Payload.ArgRedecl,
+                .fail_decl => Payload.FailDecl,
                 .var_simple, .pub_var_simple, .wrapped_local, .mut_str => Payload.SimpleVarDecl,
                 .enum_constant => Payload.EnumConstant,
                 .array_filler => Payload.ArrayFiller,
@@ -705,6 +706,15 @@ pub const Payload = struct {
         data: struct {
             actual: []const u8,
             mangled: []const u8,
+        },
+    };
+
+    pub const FailDecl = struct {
+        base: Payload,
+        data: struct {
+            actual: []const u8,
+            mangled: []const u8,
+            local: bool,
         },
     };
 
@@ -1203,11 +1213,24 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         },
         .fail_decl => {
             const payload = node.castTag(.fail_decl).?.data;
-            // pub const name = @compileError(msg);
-            _ = try c.addToken(.keyword_pub, "pub");
+            // pub const name = (if (true))? @compileError(msg);
+            if (!payload.local) _ = try c.addToken(.keyword_pub, "pub");
             const const_tok = try c.addToken(.keyword_const, "const");
             _ = try c.addIdentifier(payload.actual);
             _ = try c.addToken(.equal, "=");
+
+            var if_tok: TokenIndex = undefined;
+            var true_node: NodeIndex = undefined;
+            if (payload.local) {
+                if_tok = try c.addToken(.keyword_if, "if");
+                _ = try c.addToken(.l_paren, "(");
+                true_node = try c.addNode(.{
+                    .tag = .identifier,
+                    .main_token = try c.addToken(.identifier, "true"),
+                    .data = undefined,
+                });
+                _ = try c.addToken(.r_paren, ")");
+            }
 
             const compile_error_tok = try c.addToken(.builtin, "@compileError");
             _ = try c.addToken(.l_paren, "(");
@@ -1233,7 +1256,16 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
                 .data = .{
                     .opt_node_and_opt_node = .{
                         .none, // Type expression
-                        compile_error.toOptional(), // Init expression
+                        if (payload.local) // Init expression
+                            (try c.addNode(.{
+                                .tag = .if_simple,
+                                .main_token = if_tok,
+                                .data = .{ .node_and_node = .{
+                                    true_node, compile_error,
+                                } },
+                            })).toOptional()
+                        else
+                            compile_error.toOptional(),
                     },
                 },
             });

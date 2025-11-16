@@ -17,6 +17,10 @@ pub fn main() u8 {
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
+    var threaded: std.Io.Threaded = .init(gpa);
+    defer threaded.deinit();
+    const io = threaded.io();
+
     const args = process.argsAlloc(arena) catch {
         std.debug.print("ran out of memory allocating arguments\n", .{});
         if (fast_exit) process.exit(1);
@@ -32,7 +36,7 @@ pub fn main() u8 {
         } },
     };
 
-    var comp = aro.Compilation.initDefault(gpa, arena, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
+    var comp = aro.Compilation.initDefault(gpa, arena, io, &diagnostics, std.fs.cwd()) catch |err| switch (err) {
         error.OutOfMemory => {
             std.debug.print("ran out of memory initializing C compilation\n", .{});
             if (fast_exit) process.exit(1);
@@ -51,7 +55,7 @@ pub fn main() u8 {
     var driver: aro.Driver = .{ .comp = &comp, .diagnostics = &diagnostics, .aro_name = exe_name };
     defer driver.deinit();
 
-    var toolchain: aro.Toolchain = .{ .driver = &driver, .filesystem = .{ .real = comp.cwd } };
+    var toolchain: aro.Toolchain = .{ .driver = &driver };
     defer toolchain.deinit();
 
     translate(&driver, &toolchain, args) catch |err| switch (err) {
@@ -144,10 +148,8 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         error.OutOfMemory => return error.OutOfMemory,
         error.TooManyMultilibs => return d.fatal("found more than one multilib with the same priority", .{}),
     };
-    tc.defineSystemIncludes() catch |er| switch (er) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.AroIncludeNotFound => return d.fatal("unable to find Aro builtin headers", .{}),
-    };
+    try tc.defineSystemIncludes();
+    try d.comp.initSearchPath(d.includes.items, false);
 
     const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
         error.FileTooBig => return d.fatal("builtin macro source exceeded max size", .{}),
@@ -163,7 +165,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
 
-    try pp.preprocessSources(&.{ source, builtin_macros, user_macros });
+    try pp.preprocessSources(.{ .main = source, .builtin = builtin_macros, .command_line = user_macros });
 
     var c_tree = try pp.parse();
     defer c_tree.deinit();

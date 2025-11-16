@@ -82,12 +82,11 @@ pub fn getMangle(t: *Translator) u32 {
 
 /// Convert an `aro.Source.Location` to a 'file:line:column' string.
 pub fn locStr(t: *Translator, loc: aro.Source.Location) ![]const u8 {
-    const source = t.comp.getSource(loc.id);
-    const line_col = source.lineCol(loc);
-    const filename = source.path;
+    const expanded = loc.expand(t.comp);
+    const filename = expanded.path;
 
-    const line = source.physicalLine(loc);
-    const col = line_col.col;
+    const line = expanded.line_no;
+    const col = expanded.col;
 
     return std.fmt.allocPrint(t.arena, "{s}:{d}:{d}", .{ filename, line, col });
 }
@@ -139,7 +138,11 @@ pub fn failDeclExtra(
     // location
     // pub const name = @compileError(msg);
     const fail_msg = try std.fmt.allocPrint(t.arena, format, args);
-    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{ .actual = name, .mangled = fail_msg });
+    const fail_decl = try ZigTag.fail_decl.create(t.arena, .{
+        .actual = name,
+        .mangled = fail_msg,
+        .local = scope.id != .root,
+    });
 
     const str = try t.locStr(loc);
     const location_comment = try std.fmt.allocPrint(t.arena, "// {s}", .{str});
@@ -307,7 +310,7 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
     }
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (!t.isSelfDefinedMacro(name, macro)) {
             try t.global_names.put(t.gpa, name, {});
         }
@@ -534,6 +537,13 @@ fn transRecordDecl(t: *Translator, scope: *Scope, record_qt: QualType) Error!voi
             if (field.bit_width != .null) {
                 try t.opaque_demotes.put(t.gpa, base.qt, {});
                 try t.warn(scope, field_loc, "{s} demoted to opaque type - has bitfield", .{container_kind_name});
+                break :init ZigTag.opaque_literal.init();
+            }
+
+            // Demote record to opaque if it contains an opaque field
+            if (t.typeWasDemotedToOpaque(field.qt)) {
+                try t.opaque_demotes.put(t.gpa, base.qt, {});
+                try t.warn(scope, field_loc, "{s} demoted to opaque type - has opaque field", .{container_kind_name});
                 break :init ZigTag.opaque_literal.init();
             }
 
@@ -1029,7 +1039,7 @@ fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAs
     try scope.appendNode(assert_node);
 }
 
-fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.SimpleAsm) Error!void {
+fn transGlobalAsm(t: *Translator, scope: *Scope, global_asm: Node.GlobalAsm) Error!void {
     const asm_string = t.tree.value_map.get(global_asm.asm_str).?;
     const bytes = t.comp.interner.get(asm_string.ref()).bytes;
 
@@ -1087,6 +1097,17 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             .double => return ZigTag.type.create(t.arena, "f64"),
             .long_double => return ZigTag.type.create(t.arena, "c_longdouble"),
             .float128 => return ZigTag.type.create(t.arena, "f128"),
+            .bf16,
+            .float32,
+            .float64,
+            .float32x,
+            .float64x,
+            .float128x,
+            .dfloat32,
+            .dfloat64,
+            .dfloat128,
+            .dfloat64x,
+            => return t.fail(error.UnsupportedType, source_loc, "TODO support atomic type: '{s}'", .{try t.getTypeStr(qt)}),
         },
         .pointer => |pointer_ty| {
             const child_qt = pointer_ty.child;
@@ -1456,18 +1477,7 @@ fn typeIsOpaque(t: *Translator, qt: QualType) bool {
 }
 
 fn typeWasDemotedToOpaque(t: *Translator, qt: QualType) bool {
-    const base = qt.base(t.comp);
-    switch (base.type) {
-        .@"struct", .@"union" => |record_ty| {
-            if (t.opaque_demotes.contains(base.qt)) return true;
-            for (record_ty.fields) |field| {
-                if (t.typeWasDemotedToOpaque(field.qt)) return true;
-            }
-            return false;
-        },
-        .@"enum" => return t.opaque_demotes.contains(base.qt),
-        else => return false,
-    }
+    return t.opaque_demotes.contains(qt);
 }
 
 fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
@@ -1549,7 +1559,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
         .goto_stmt, .computed_goto_stmt, .labeled_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
         },
-        .gnu_asm_simple => {
+        .asm_stmt => {
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm inside function", .{});
         },
         else => return t.transExprCoercing(scope, stmt, .unused),
@@ -2210,7 +2220,7 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .default_stmt,
         .goto_stmt,
         .computed_goto_stmt,
-        .gnu_asm_simple,
+        .asm_stmt,
         .global_asm,
         .typedef,
         .struct_decl,
@@ -3044,6 +3054,10 @@ fn transMemberAccess(
         .normal => member_access.base.qt(t.tree),
         .ptr => member_access.base.qt(t.tree).childType(t.comp),
     };
+    if (t.typeWasDemotedToOpaque(base_info)) {
+        return t.fail(error.UnsupportedTranslation, member_access.access_tok, "member access of demoted record", .{});
+    }
+
     const record = base_info.getRecord(t.comp).?;
     const field = record.fields[member_access.member_index];
     const field_name = if (field.name_tok == 0) t.anonymous_record_field_names.get(.{
@@ -3979,7 +3993,8 @@ fn createFlexibleMemberFn(
 
     // return @ptrCast(&self.*.<field_name>);
     const address_of = try ZigTag.address_of.create(t.arena, field_access);
-    const casted = try ZigTag.ptr_cast.create(t.arena, address_of);
+    const aligned = try ZigTag.align_cast.create(t.arena, address_of);
+    const casted = try ZigTag.ptr_cast.create(t.arena, aligned);
     const return_stmt = try ZigTag.@"return".create(t.arena, casted);
     const body = try ZigTag.block_single.create(t.arena, return_stmt);
 
@@ -4011,7 +4026,7 @@ fn transMacros(t: *Translator) !void {
     defer pattern_list.deinit(t.gpa);
 
     for (t.pp.defines.keys(), t.pp.defines.values()) |name, macro| {
-        if (macro.is_builtin) continue;
+        if (macro.isBuiltin()) continue;
         if (t.global_scope.containsNow(name)) {
             continue;
         }
