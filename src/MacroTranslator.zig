@@ -79,6 +79,20 @@ pub fn transFnMacro(mt: *MacroTranslator) ParseError!void {
         try block_scope.discardVariable(mangled_name);
     }
 
+    // #define FOO(x)
+    if (mt.peek() == .eof) {
+        try block_scope.statements.append(mt.t.gpa, ZigTag.return_void.init());
+
+        const fn_decl = try ZigTag.pub_inline_fn.create(mt.t.arena, .{
+            .name = mt.name,
+            .params = fn_params,
+            .return_type = ZigTag.void_type.init(),
+            .body = try block_scope.complete(),
+        });
+        try mt.t.addTopLevelDecl(mt.name, fn_decl);
+        return;
+    }
+
     const expr = try mt.parseCExpr(scope);
     const last = mt.peek();
     if (last != .eof)
@@ -252,7 +266,7 @@ fn parseCNumLit(mt: *MacroTranslator) ParseError!ZigNode {
     const lit_bytes = mt.tokSlice();
     mt.i += 1;
 
-    var bytes = try std.ArrayListUnmanaged(u8).initCapacity(arena, lit_bytes.len + 3);
+    var bytes = try std.ArrayList(u8).initCapacity(arena, lit_bytes.len + 3);
 
     const prefix = aro.Tree.Token.NumberPrefix.fromString(lit_bytes);
     switch (prefix) {
@@ -974,7 +988,12 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope) ParseError!
             try mt.expect(.identifier);
 
             const name = try std.fmt.allocPrint(mt.t.arena, "{s}_{s}", .{ tag_name, identifier });
-            return try ZigTag.identifier.create(mt.t.arena, name);
+            if (!mt.t.global_scope.contains(name)) {
+                try mt.fail("unable to translate C expr: '{s}' not found", .{name});
+                return error.ParseError;
+            }
+
+            return try ZigTag.identifier.create(mt.t.arena, try mt.t.arena.dupe(u8, name));
         },
         else => {},
     }
