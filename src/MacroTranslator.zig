@@ -79,6 +79,20 @@ pub fn transFnMacro(mt: *MacroTranslator) ParseError!void {
         try block_scope.discardVariable(mangled_name);
     }
 
+    // #define FOO(x)
+    if (mt.peek() == .eof) {
+        try block_scope.statements.append(mt.t.gpa, ZigTag.return_void.init());
+
+        const fn_decl = try ZigTag.pub_inline_fn.create(mt.t.arena, .{
+            .name = mt.name,
+            .params = fn_params,
+            .return_type = ZigTag.void_type.init(),
+            .body = try block_scope.complete(),
+        });
+        try mt.t.addTopLevelDecl(mt.name, fn_decl);
+        return;
+    }
+
     const expr = try mt.parseCExpr(scope);
     const last = mt.peek();
     if (last != .eof)
