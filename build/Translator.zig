@@ -200,12 +200,21 @@ pub fn addSystemFrameworkPath(t: *const Translator, path: Build.LazyPath) void {
 /// Exposes the embed path `path` to both translate-c and to `t.mod`.
 pub fn addEmbedPath(t: *const Translator, path: Build.LazyPath) void {
     t.mod.addEmbedPath(path);
-    t.run.appendPrefixedFileArg("--embed-dir=", path);
+    t.run.addPrefixedDirectoryArg("--embed-dir=", path);
 }
 /// Exposes the config header generaeted by `ch` to both translate-c and to `t.mod`.
 pub fn addConfigHeader(t: *const Translator, ch: *Build.Step.ConfigHeader) void {
     t.mod.addConfigHeader(ch);
     appendIncludeArg(t.run, "-I", ch.getOutputDir());
+}
+
+/// If the value is omitted, it is set to 1.
+/// `name` and `value` need not live longer than the function call.
+pub fn defineCMacro(t: *const Translator, name: []const u8, value: ?[]const u8) void {
+    const b = t.mod.owner;
+    const macro = b.fmt("-D{s}={s}", .{ name, value orelse "1" });
+    t.mod.c_macros.append(b.allocator, macro) catch @panic("OOM");
+    t.run.addArg(macro);
 }
 
 /// Helper function for adding things like `-I /path/to/include/dir` to arg vectors.

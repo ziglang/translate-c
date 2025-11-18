@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    trans.run.addArg("-D__TRANSLATE_C__");
+    trans.defineCMacro("__TRANSLATE_C__", null);
     // Build an executable from `trans.mod` (the Zig module containing the translated code).
     const translated_exe = b.addExecutable(.{
         .name = "translated-exe",
