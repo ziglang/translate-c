@@ -988,7 +988,12 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope) ParseError!
             try mt.expect(.identifier);
 
             const name = try std.fmt.allocPrint(mt.t.arena, "{s}_{s}", .{ tag_name, identifier });
-            return try ZigTag.identifier.create(mt.t.arena, name);
+            if (!mt.t.global_scope.contains(name)) {
+                try mt.fail("unable to translate C expr: '{s}' not found", .{name});
+                return error.ParseError;
+            }
+
+            return try ZigTag.identifier.create(mt.t.arena, try mt.t.arena.dupe(u8, name));
         },
         else => {},
     }
