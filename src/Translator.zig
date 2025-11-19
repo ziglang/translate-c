@@ -3105,7 +3105,7 @@ fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAcces
     const index = index: {
         const index = try t.transExpr(scope, array_access.index, .used);
         const index_qt = array_access.index.qt(t.tree);
-        const maybe_bigger_than_usize = switch (index_qt.base(t.comp).type) {
+        const maybe_bigger_than_usize = type: switch (index_qt.base(t.comp).type) {
             .bool => {
                 break :index try ZigTag.int_from_bool.create(t.arena, index);
             },
@@ -3114,6 +3114,7 @@ fn transArrayAccess(t: *Translator, scope: *Scope, array_access: Node.ArrayAcces
                 else => false,
             },
             .bit_int => |bit_int| bit_int.bits > t.comp.target.ptrBitWidth(),
+            .@"enum" => |e| if (e.tag) |tag| continue :type tag.base(t.comp).type else false,
             else => unreachable,
         };
 
