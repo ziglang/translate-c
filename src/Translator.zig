@@ -19,6 +19,46 @@ const MacroTranslator = @import("MacroTranslator.zig");
 const PatternList = @import("PatternList.zig");
 const Scope = @import("Scope.zig");
 
+const AnonymousRecordFieldNames = struct {
+    pub const Key = struct {
+        parent: QualType,
+        field: QualType,
+    };
+
+    pub const Context = struct {
+        pub fn hash(ctx: Context, key: Key) u64 {
+            const auto_hash = std.hash_map.getAutoHashFn(Key, Context);
+            return auto_hash(ctx, .{
+                .parent = key.parent.unqualified(),
+                .field = key.field.unqualified(),
+            });
+        }
+
+        pub fn eql(ctx: Context, a: Key, b: Key) bool {
+            const auto_eql = std.hash_map.getAutoEqlFn(Key, Context);
+            return auto_eql(ctx, .{
+                .parent = a.parent.unqualified(),
+                .field = a.field.unqualified(),
+            }, .{
+                .parent = b.parent.unqualified(),
+                .field = b.field.unqualified(),
+            });
+        }
+    };
+};
+
+pub const QualTypeHashContext = struct {
+    pub fn hash(ctx: QualTypeHashContext, key: QualType) u64 {
+        const auto_hash = std.hash_map.getAutoHashFn(QualType, QualTypeHashContext);
+        return auto_hash(ctx, key.unqualified());
+    }
+
+    pub fn eql(ctx: QualTypeHashContext, a: QualType, b: QualType) bool {
+        const auto_eql = std.hash_map.getAutoEqlFn(QualType, QualTypeHashContext);
+        return auto_eql(ctx, a.unqualified(), b.unqualified());
+    }
+};
+
 pub const Error = std.mem.Allocator.Error;
 pub const MacroProcessingError = Error || error{UnexpectedMacroToken};
 pub const TypeError = Error || error{UnsupportedType};
@@ -44,14 +84,16 @@ mangle_count: u32 = 0,
 /// Table of declarations for enum, struct, union and typedef types.
 type_decls: std.AutoArrayHashMapUnmanaged(Node.Index, []const u8) = .empty,
 /// Table of record decls that have been demoted to opaques.
-opaque_demotes: std.AutoHashMapUnmanaged(QualType, void) = .empty,
+opaque_demotes: std.HashMapUnmanaged(QualType, void, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Table of unnamed enums and records that are child types of typedefs.
-unnamed_typedefs: std.AutoHashMapUnmanaged(QualType, []const u8) = .empty,
+unnamed_typedefs: std.HashMapUnmanaged(QualType, []const u8, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Table of anonymous record to generated field names.
-anonymous_record_field_names: std.AutoHashMapUnmanaged(struct {
-    parent: QualType,
-    field: QualType,
-}, []const u8) = .empty,
+anonymous_record_field_names: std.HashMapUnmanaged(
+    AnonymousRecordFieldNames.Key,
+    []const u8,
+    AnonymousRecordFieldNames.Context,
+    std.hash_map.default_max_load_percentage,
+) = .empty,
 
 /// This one is different than the root scope's name table. This contains
 /// a list of names that we found by visiting all the top level decls without
