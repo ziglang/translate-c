@@ -40,6 +40,9 @@ pub fn build(b: *std.Build) void {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
+    if (optimize != .Debug) {
+        translate_c_exe.linkLibC();
+    }
 
     b.installDirectory(.{
         .source_dir = aro.path("include"),

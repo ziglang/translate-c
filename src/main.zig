@@ -7,11 +7,16 @@ const Translator = @import("Translator.zig");
 
 const fast_exit = @import("builtin").mode != .Debug;
 
-var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main() u8 {
-    const gpa = general_purpose_allocator.allocator();
-    defer _ = general_purpose_allocator.deinit();
+    const gpa = if (@import("builtin").link_libc)
+        std.heap.raw_c_allocator
+    else
+        debug_allocator.allocator();
+    defer if (!@import("builtin").link_libc) {
+        _ = debug_allocator.deinit();
+    };
 
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_instance.deinit();
