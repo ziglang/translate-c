@@ -993,7 +993,7 @@ fn parseCSpecifierQualifierList(mt: *MacroTranslator, scope: *Scope) ParseError!
                 return error.ParseError;
             }
 
-            return try ZigTag.identifier.create(mt.t.arena, try mt.t.arena.dupe(u8, name));
+            return try ZigTag.identifier.create(mt.t.arena, name);
         },
         else => {},
     }
