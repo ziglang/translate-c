@@ -149,9 +149,9 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         error.TooManyMultilibs => return d.fatal("found more than one multilib with the same priority", .{}),
     };
     try tc.defineSystemIncludes();
-    try d.comp.initSearchPath(d.includes.items, false);
+    try d.comp.initSearchPath(d.includes.items, d.verbose_search_path);
 
-    const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
+    const builtin_macros = d.comp.generateBuiltinMacros(d.system_defines) catch |err| switch (err) {
         error.FileTooBig => return d.fatal("builtin macro source exceeded max size", .{}),
         else => |e| return e,
     };
@@ -165,7 +165,13 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
 
     if (opt_dep_file) |*dep_file| pp.dep_file = dep_file;
 
-    try pp.preprocessSources(.{ .main = source, .builtin = builtin_macros, .command_line = user_macros });
+    try pp.preprocessSources(.{
+        .main = source,
+        .builtin = builtin_macros,
+        .command_line = user_macros,
+        .imacros = d.imacros.items,
+        .implicit_includes = d.implicit_includes.items,
+    });
 
     var c_tree = try pp.parse();
     defer c_tree.deinit();

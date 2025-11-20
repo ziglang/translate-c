@@ -1112,7 +1112,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
             .dfloat64,
             .dfloat128,
             .dfloat64x,
-            => return t.fail(error.UnsupportedType, source_loc, "TODO support atomic type: '{s}'", .{try t.getTypeStr(qt)}),
+            => return t.fail(error.UnsupportedType, source_loc, "TODO support float type: '{s}'", .{try t.getTypeStr(qt)}),
         },
         .pointer => |pointer_ty| {
             const child_qt = pointer_ty.child;
@@ -1565,7 +1565,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO goto", .{});
         },
         .asm_stmt => {
-            return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm inside function", .{});
+            return t.fail(error.UnsupportedTranslation, stmt.tok(t.tree), "TODO asm stmt", .{});
         },
         else => return t.transExprCoercing(scope, stmt, .unused),
     }
