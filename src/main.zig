@@ -86,6 +86,8 @@ pub const usage =
     \\  --version           Print translate-c version
     \\  -fmodule-libs       Import libraries as modules
     \\  -fno-module-libs    (default) Install libraries next to output file
+    \\  -fsystem-defines    (default) Use system defines and includes for the target platform
+    \\  -fno-system-defines Do not use system defines and includes for the target platform
     \\
     \\
 ;
@@ -94,6 +96,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
     const gpa = d.comp.gpa;
 
     var module_libs = false;
+    var system_defines: aro.Compilation.SystemDefinesMode = .include_system_defines;
 
     const aro_args = args: {
         var i: usize = 0;
@@ -116,6 +119,10 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
                 module_libs = true;
             } else if (mem.eql(u8, arg, "-fno-module-libs")) {
                 module_libs = false;
+            } else if (mem.eql(u8, arg, "-fsystem-defines")) {
+                system_defines = .include_system_defines;
+            } else if (mem.eql(u8, arg, "-fno-system-defines")) {
+                system_defines = .no_system_defines;
             } else {
                 i += 1;
             }
@@ -148,10 +155,12 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: [][:0]u8) !void {
         error.OutOfMemory => return error.OutOfMemory,
         error.TooManyMultilibs => return d.fatal("found more than one multilib with the same priority", .{}),
     };
-    try tc.defineSystemIncludes();
+    if (system_defines == .include_system_defines) {
+        try tc.defineSystemIncludes();
+    }
     try d.comp.initSearchPath(d.includes.items, false);
 
-    const builtin_macros = d.comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
+    const builtin_macros = d.comp.generateBuiltinMacros(system_defines) catch |err| switch (err) {
         error.FileTooBig => return d.fatal("builtin macro source exceeded max size", .{}),
         else => |e| return e,
     };
