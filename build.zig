@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const skip_run_translated = b.option(bool, "skip-run-translated", "Main test suite skips run-translated tests") orelse false;
     const test_cross_targets = b.option(bool, "test-cross-targets", "Include cross-translation targets in the test cases") orelse false;
     const use_llvm = b.option(bool, "llvm", "Use LLVM backend to generate aro executable");
+    const link_libc = b.option(bool, "link-libc", "Link libc") orelse (optimize != .Debug);
 
     const aro = b.dependency("aro", .{
         .target = target,
@@ -40,7 +41,7 @@ pub fn build(b: *std.Build) void {
         .use_llvm = use_llvm,
         .use_lld = use_llvm,
     });
-    if (optimize != .Debug) {
+    if (link_libc) {
         translate_c_exe.linkLibC();
     }
 
