@@ -10,16 +10,17 @@ static inline int dynamic_array_access(EnumValues idx) {
 
 // translate
 //
+// pub const one: c_int = 1;
+// pub const two: c_int = 2;
+// pub const EnumValues = c_uint;
 // pub fn dynamic_array_access(arg_idx: EnumValues) callconv(.c) c_int {
 //     var idx = arg_idx;
 //     _ = &idx;
 //     const static_local_values = struct {
-//         const values: [5]c_int = [5]c_int{
+//         const values: [3]c_int = [3]c_int{
 //             0,
 //             1,
 //             2,
-//             3,
-//             4,
 //         };
 //     };
 //     _ = &static_local_values;
