@@ -32,7 +32,7 @@ pub const ContainerMemberFnsHashMap = std.ArrayHashMapUnmanaged(
             return auto_eql(self, a.unqualified(), b.unqualified(), b_index);
         }
     },
-    !std.array_hash_map.autoEqlIsCheap(aro.QualType),
+    false,
 );
 
 id: Id,
