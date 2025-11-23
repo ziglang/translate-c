@@ -18,7 +18,22 @@ pub const ContainerMemberFns = struct {
     container_decl_ptr: *ast.Node,
     member_fns: std.ArrayList(*ast.Payload.Func) = .empty,
 };
-pub const ContainerMemberFnsHashMap = std.AutoArrayHashMapUnmanaged(aro.QualType, ContainerMemberFns);
+pub const ContainerMemberFnsHashMap = std.ArrayHashMapUnmanaged(
+    aro.QualType,
+    ContainerMemberFns,
+    struct {
+        pub fn hash(self: @This(), key: aro.QualType) u32 {
+            const auto_hash = std.array_hash_map.getAutoHashFn(aro.QualType, @This());
+            return auto_hash(self, key.unqualified());
+        }
+
+        pub fn eql(self: @This(), a: aro.QualType, b: aro.QualType, b_index: usize) bool {
+            const auto_eql = std.array_hash_map.getAutoEqlFn(aro.QualType, @This());
+            return auto_eql(self, a.unqualified(), b.unqualified(), b_index);
+        }
+    },
+    false,
+);
 
 id: Id,
 parent: ?*Scope,
