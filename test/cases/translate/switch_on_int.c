@@ -69,7 +69,9 @@ void switch_fn(int i) {
 //             @as(c_int, 6) => {
 //                 while (true) {
 //                     switch (res) {
-//                         @as(c_int, 9) => break,
+//                         @as(c_int, 9) => {
+//                             break;
+//                         },
 //                         else => {},
 //                     }
 //                     break;

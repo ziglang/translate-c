@@ -8,6 +8,12 @@ void foo(void) {
     do
         b = b -1;
     while (b);
+    do {
+        __builtin_unreachable();
+    } while (0);
+    do {
+        continue;
+    } while (1);
 }
 
 // translate
@@ -24,5 +30,11 @@ void foo(void) {
 //     while (true) {
 //         b = b - @as(c_int, 1);
 //         if (!(b != 0)) break;
+//     }
+//     while (true) {
+//         unreachable;
+//     }
+//     while (true) {
+//         continue;
 //     }
 // }

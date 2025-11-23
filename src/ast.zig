@@ -455,14 +455,14 @@ pub const Node = extern union {
         return .{ .ptr_otherwise = payload };
     }
 
-    pub fn isNoreturn(node: Node, break_counts: bool) bool {
-        switch (node.tag()) {
+    pub fn isNoreturn(node: Node) bool {
+        return switch (node.tag()) {
             .block => {
                 const block_node = node.castTag(.block).?;
                 if (block_node.data.stmts.len == 0) return false;
 
                 const last = block_node.data.stmts[block_node.data.stmts.len - 1];
-                return last.isNoreturn(break_counts);
+                return last.isNoreturn();
             },
             .@"switch" => {
                 const switch_node = node.castTag(.@"switch").?;
@@ -475,15 +475,16 @@ pub const Node = extern union {
                     else
                         unreachable;
 
-                    if (!body.isNoreturn(break_counts)) return false;
+                    if (!body.isNoreturn()) return false;
                 }
                 return true;
             },
-            .@"return", .return_void => return true,
-            .@"break" => if (break_counts) return true,
-            else => {},
-        }
-        return false;
+            .@"return", .return_void => true,
+            .@"break" => true,
+            .@"continue" => true,
+            .@"unreachable" => true,
+            else => false,
+        };
     }
 
     pub fn isBoolRes(res: Node) bool {
