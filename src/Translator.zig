@@ -1618,7 +1618,10 @@ fn transCompoundStmtInline(t: *Translator, compound: Node.CompoundStmt, block: *
         const result = try t.transStmt(&block.base, stmt);
         switch (result.tag()) {
             .declaration, .empty_block => {},
-            else => try block.statements.append(t.gpa, result),
+            else => {
+                try block.statements.append(t.gpa, result);
+                if (result.isNoreturn()) return;
+            },
         }
     }
 }
@@ -1754,7 +1757,7 @@ fn transDoWhileStmt(t: *Translator, scope: *Scope, do_stmt: Node.DoWhileStmt) Tr
     };
 
     var body_node = try t.transStmt(&loop_scope, do_stmt.body);
-    if (body_node.isNoreturn(true)) {
+    if (body_node.isNoreturn()) {
         // The body node ends in a noreturn statement. Simply put it in a while (true)
         // in case it contains breaks or continues.
     } else if (do_stmt.body.get(t.tree) == .compound_stmt) {
@@ -1974,8 +1977,6 @@ fn transSwitchProngStmt(
     body: []const Node.Index,
 ) TransError!ZigNode {
     switch (stmt.get(t.tree)) {
-        .break_stmt => return ZigTag.@"break".init(),
-        .return_stmt => return t.transStmt(scope, stmt),
         .case_stmt, .default_stmt => unreachable,
         else => {
             var block_scope = try Scope.Block.init(t, scope, false);
@@ -1996,15 +1997,6 @@ fn transSwitchProngStmtInline(
 ) TransError!void {
     for (body) |stmt| {
         switch (stmt.get(t.tree)) {
-            .return_stmt => {
-                const result = try t.transStmt(&block.base, stmt);
-                try block.statements.append(t.gpa, result);
-                return;
-            },
-            .break_stmt => {
-                try block.statements.append(t.gpa, ZigTag.@"break".init());
-                return;
-            },
             .case_stmt => |case_stmt| {
                 var sub = case_stmt.body;
                 while (true) switch (sub.get(t.tree)) {
@@ -2015,7 +2007,7 @@ fn transSwitchProngStmtInline(
                 const result = try t.transStmt(&block.base, sub);
                 assert(result.tag() != .declaration);
                 try block.statements.append(t.gpa, result);
-                if (result.isNoreturn(true)) return;
+                if (result.isNoreturn()) return;
             },
             .default_stmt => |default_stmt| {
                 var sub = default_stmt.body;
@@ -2027,18 +2019,16 @@ fn transSwitchProngStmtInline(
                 const result = try t.transStmt(&block.base, sub);
                 assert(result.tag() != .declaration);
                 try block.statements.append(t.gpa, result);
-                if (result.isNoreturn(true)) return;
-            },
-            .compound_stmt => |compound_stmt| {
-                const result = try t.transCompoundStmt(&block.base, compound_stmt);
-                try block.statements.append(t.gpa, result);
-                if (result.isNoreturn(true)) return;
+                if (result.isNoreturn()) return;
             },
             else => {
                 const result = try t.transStmt(&block.base, stmt);
                 switch (result.tag()) {
                     .declaration, .empty_block => {},
-                    else => try block.statements.append(t.gpa, result),
+                    else => {
+                        try block.statements.append(t.gpa, result);
+                        if (result.isNoreturn()) return;
+                    },
                 }
             },
         }
