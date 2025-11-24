@@ -946,7 +946,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable, decl_nod
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
-        .is_const = is_const,
+        .is_const = is_const and !self_referential,
         .is_extern = is_extern,
         .is_export = toplevel and variable.storage_class == .auto and linkage == .strong,
         .is_threadlocal = variable.thread_local,
