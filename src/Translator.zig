@@ -1141,21 +1141,17 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
         },
         .float => |float_ty| switch (float_ty) {
             .fp16, .float16 => return ZigTag.type.create(t.arena, "f16"),
-            .float => return ZigTag.type.create(t.arena, "f32"),
-            .double => return ZigTag.type.create(t.arena, "f64"),
-            .long_double => return ZigTag.type.create(t.arena, "c_longdouble"),
+            .float, .float32 => return ZigTag.type.create(t.arena, "f32"),
+            .double, .float64, .float32x => return ZigTag.type.create(t.arena, "f64"),
+            .long_double, .float64x => return ZigTag.type.create(t.arena, "c_longdouble"),
             .float128 => return ZigTag.type.create(t.arena, "f128"),
-            .bf16,
-            .float32,
-            .float64,
-            .float32x,
-            .float64x,
-            .float128x,
+            .bf16 => return t.fail(error.UnsupportedType, source_loc, "TODO support bfloat16", .{}),
             .dfloat32,
             .dfloat64,
             .dfloat128,
             .dfloat64x,
-            => return t.fail(error.UnsupportedType, source_loc, "TODO support float type: '{s}'", .{try t.getTypeStr(qt)}),
+            => return t.fail(error.UnsupportedType, source_loc, "TODO support decimal float type: '{s}'", .{try t.getTypeStr(qt)}),
+            .float128x => unreachable, // Unsupported on all targets
         },
         .pointer => |pointer_ty| {
             const child_qt = pointer_ty.child;
