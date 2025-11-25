@@ -355,17 +355,6 @@ fn parseCNumLit(mt: *MacroTranslator) ParseError!ZigNode {
             .L => "c_longdouble",
             .W, .F64x => "f80",
             .Q, .F128 => "f128",
-            .BF16 => {
-                // Zig doesn't support BFloat16, so the best thing we can do is convert it to u16,
-                // so that the value is bit-to-bit identic between the emitted Zig and original C code.
-                // https://github.com/ziglang/zig/issues/3148
-                const value_u16 = parseBfloat16AsU16(bytes.items);
-                std.debug.assert(bytes.capacity >= 6); // guaranteed since we allocated literal len + 3
-                const bf16_hex = std.fmt.bufPrint(bytes.allocatedSlice(), "0x{x}", .{value_u16}) catch unreachable;
-                const rhs = try ZigTag.integer_literal.create(arena, bf16_hex);
-                const type_node = try ZigTag.type.create(arena, "u16");
-                return ZigTag.as.create(arena, .{ .lhs = type_node, .rhs = rhs });
-            },
             else => {
                 try mt.fail("TODO: float literal suffix: '{s}'", .{suffix_str});
                 return error.ParseError;
@@ -1367,12 +1356,4 @@ fn parseCUnaryExpr(mt: *MacroTranslator, scope: *Scope) ParseError!ZigNode {
     }
 
     return try mt.parseCPostfixExpr(scope, null);
-}
-
-fn parseBfloat16AsU16(bytes: []const u8) u16 {
-    const value_f32 = std.fmt.parseFloat(f32, bytes) catch math.nan(f32);
-    var int: u32 = @bitCast(value_f32);
-    // Round up if needed.
-    int += 0x8000;
-    return @truncate(int >> 16);
 }
