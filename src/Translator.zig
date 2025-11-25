@@ -140,10 +140,9 @@ fn maybeSuppressResult(t: *Translator, used: ResultUsed, result: ZigNode) TransE
 
 pub fn addTopLevelDecl(t: *Translator, name: []const u8, decl_node: ZigNode) !void {
     const gop = try t.global_scope.sym_table.getOrPut(t.gpa, name);
-    if (!gop.found_existing) {
-        gop.value_ptr.* = decl_node;
-        try t.global_scope.nodes.append(t.gpa, decl_node);
-    }
+    if (gop.found_existing) return; // Any duplicate decls are equivalent
+    gop.value_ptr.* = decl_node;
+    try t.global_scope.nodes.append(t.gpa, decl_node);
 }
 
 fn fail(
@@ -317,10 +316,12 @@ fn prepopulateGlobalNameTable(t: *Translator) !void {
                 const gop = try t.unnamed_typedefs.getOrPut(t.gpa, base.qt);
                 if (gop.found_existing) {
                     // One typedef can declare multiple names.
-                    // TODO Don't put this one in `decl_table` so it's processed later.
+                    // Don't put this one in `decl_table` so it's processed later.
                     continue;
                 }
                 gop.value_ptr.* = decl_name;
+                try t.type_decls.put(t.gpa, decl, decl_name);
+                try t.typedefs.put(t.gpa, decl_name, {});
             },
 
             .struct_decl,
