@@ -2677,7 +2677,7 @@ fn transShiftExpr(t: *Translator, scope: *Scope, bin: Node.Binary, op_id: ZigTag
     // lhs >> @intCast(rh)
     const lhs = try t.transExpr(scope, bin.lhs, .used);
 
-    const rhs = try t.transExprCoercing(scope, bin.rhs, .used);
+    const rhs = try t.transExpr(scope, bin.rhs, .used);
     const rhs_casted = try ZigTag.int_cast.create(t.arena, rhs);
 
     return t.createBinOpNode(op_id, lhs, rhs_casted);
