@@ -2241,6 +2241,10 @@ fn transExpr(t: *Translator, scope: *Scope, expr: Node.Index, used: ResultUsed) 
         .builtin_convertvector => |convertvector| try t.transConvertvectorExpr(scope, convertvector),
         .builtin_shufflevector => |shufflevector| try t.transShufflevectorExpr(scope, shufflevector),
 
+        .builtin_va_arg_pack, .builtin_va_arg_pack_len => |va_arg_pack| {
+            return t.fail(error.UnsupportedTranslation, va_arg_pack.builtin_tok, "TODO va arg pack", .{});
+        },
+
         .compound_stmt,
         .static_assert,
         .return_stmt,
