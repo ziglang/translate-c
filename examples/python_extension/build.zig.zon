@@ -1,0 +1,11 @@
+.{
+    .name = .python_extension,
+    .version = "0.0.0",
+    .fingerprint = 0x8d05bab9cad09ad3,
+    .paths = .{""},
+
+    .dependencies = .{
+        // Install by running `zig fetch --save git+https://github.com/ziglang/translate-c`.
+        .translate_c = .{ .path = "../../" },
+    },
+}
