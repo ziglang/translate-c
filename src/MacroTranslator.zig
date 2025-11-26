@@ -350,12 +350,15 @@ fn parseCNumLit(mt: *MacroTranslator) ParseError!ZigNode {
     if (is_float) {
         const type_node = try ZigTag.type.create(arena, switch (suffix) {
             .F16 => "f16",
-            .F => "f32",
-            .None => "f64",
+            .F, .F32 => "f32",
+            .None, .F32x, .F64 => "f64",
             .L => "c_longdouble",
-            .W => "f80",
+            .W, .F64x => "f80",
             .Q, .F128 => "f128",
-            else => unreachable,
+            else => {
+                try mt.fail("TODO: float literal suffix: '{s}'", .{suffix_str});
+                return error.ParseError;
+            },
         });
         const rhs = try ZigTag.float_literal.create(arena, bytes.items);
         return ZigTag.as.create(arena, .{ .lhs = type_node, .rhs = rhs });
