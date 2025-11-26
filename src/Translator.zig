@@ -62,7 +62,7 @@ pub const QualTypeHashContext = struct {
 pub const Error = std.mem.Allocator.Error;
 pub const MacroProcessingError = Error || error{UnexpectedMacroToken};
 pub const TypeError = Error || error{UnsupportedType};
-pub const TransError = TypeError || error{UnsupportedTranslation};
+pub const TransError = TypeError || error{ UnsupportedTranslation, SelfReferential };
 
 const Translator = @This();
 
@@ -116,6 +116,10 @@ typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
 
 /// The lhs lval of a compound assignment expression.
 compound_assign_dummy: ?ZigNode = null,
+
+/// Set of variables whose initializers are currently being translated.
+/// Used to detect self-referential initializers.
+wip_var_inits: std.AutoHashMapUnmanaged(Node.Index, void) = .empty,
 
 pub fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;
@@ -242,6 +246,7 @@ pub fn translate(options: Options) mem.Allocator.Error![]u8 {
         translator.anonymous_record_field_names.deinit(gpa);
         translator.typedefs.deinit(gpa);
         translator.global_scope.deinit();
+        translator.wip_var_inits.deinit(gpa);
     }
 
     try translator.prepopulateGlobalNameTable();
@@ -421,7 +426,7 @@ fn transDecl(t: *Translator, scope: *Scope, decl: Node.Index) !void {
 
         .variable => |variable| {
             if (variable.definition != null) return;
-            try t.transVarDecl(scope, variable);
+            try t.transVarDecl(scope, variable, decl);
         },
         .static_assert => |static_assert| {
             try t.transStaticAssert(&t.global_scope.base, static_assert);
@@ -818,6 +823,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
 
     t.transCompoundStmtInline(body_stmt, &block_scope) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
+        error.SelfReferential => unreachable,
         error.UnsupportedTranslation,
         error.UnsupportedType,
         => {
@@ -834,7 +840,7 @@ fn transFnDecl(t: *Translator, scope: *Scope, function: Node.Function) Error!voi
     return t.addTopLevelDecl(fn_name, proto_node);
 }
 
-fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!void {
+fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable, decl_node: Node.Index) Error!void {
     const base_name = t.tree.tokSlice(variable.name_tok);
     const toplevel = scope.id == .root;
     const bs: *Scope.Block = if (!toplevel) try scope.findBlockScope(t) else undefined;
@@ -872,13 +878,21 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     var is_const = variable.qt.@"const" or (array_ty != null and array_ty.?.elem.@"const");
     var is_extern = variable.storage_class == .@"extern";
 
+    var self_referential = false;
     const init_node = init: {
         if (variable.initializer) |init| {
             const maybe_literal = init.get(t.tree);
+            if (!toplevel) try t.wip_var_inits.putNoClobber(t.gpa, decl_node, {});
+            defer _ = t.wip_var_inits.remove(decl_node);
+
             const init_node = (if (maybe_literal == .string_literal_expr)
                 t.transStringLiteralInitializer(init, maybe_literal.string_literal_expr, type_node)
             else
                 t.transExprCoercing(scope, init, .used)) catch |err| switch (err) {
+                error.SelfReferential => {
+                    self_referential = true;
+                    break :init ZigTag.undefined_literal.init();
+                },
                 error.UnsupportedTranslation, error.UnsupportedType => {
                     return t.failDecl(scope, variable.name_tok, name, "unable to resolve var init expr", .{});
                 },
@@ -933,7 +947,7 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
     const alignment: ?c_uint = variable.qt.requestedAlignment(t.comp) orelse null;
     var node = try ZigTag.var_decl.create(t.arena, .{
         .is_pub = toplevel,
-        .is_const = is_const,
+        .is_const = is_const and !self_referential,
         .is_extern = is_extern,
         .is_export = toplevel and variable.storage_class == .auto and linkage == .strong,
         .is_threadlocal = variable.thread_local,
@@ -951,6 +965,21 @@ fn transVarDecl(t: *Translator, scope: *Scope, variable: Node.Variable) Error!vo
             node = try ZigTag.wrapped_local.create(t.arena, .{ .name = name, .init = node });
         }
         try scope.appendNode(node);
+        if (self_referential) {
+            var deferred_init = t.transExprCoercing(scope, variable.initializer.?, .used) catch |err| switch (err) {
+                error.SelfReferential => unreachable,
+                error.UnsupportedTranslation, error.UnsupportedType => {
+                    return t.failDecl(scope, variable.name_tok, name, "unable to resolve var init expr", .{});
+                },
+                else => |e| return e,
+            };
+            if (!variable.qt.is(t.comp, .bool) and deferred_init.isBoolRes()) {
+                deferred_init = try ZigTag.int_from_bool.create(t.arena, deferred_init);
+            }
+            const varname = try ZigTag.identifier.create(t.arena, name);
+            const assign = try ZigTag.assign.create(t.arena, .{ .lhs = varname, .rhs = deferred_init });
+            try scope.appendNode(assign);
+        }
         try bs.discardVariable(name);
 
         if (variable.qt.getAttribute(t.comp, .cleanup)) |cleanup_attr| {
@@ -1058,6 +1087,7 @@ fn transEnumDecl(t: *Translator, scope: *Scope, enum_qt: QualType) Error!void {
 
 fn transStaticAssert(t: *Translator, scope: *Scope, static_assert: Node.StaticAssert) Error!void {
     const condition = t.transExpr(scope, static_assert.cond, .used) catch |err| switch (err) {
+        error.SelfReferential => unreachable,
         error.UnsupportedTranslation, error.UnsupportedType => {
             return try t.warn(&t.global_scope.base, static_assert.cond.tok(t.tree), "unable to translate _Static_assert condition", .{});
         },
@@ -1593,7 +1623,7 @@ fn transStmt(t: *Translator, scope: *Scope, stmt: Node.Index) TransError!ZigNode
             return ZigTag.declaration.init();
         },
         .variable => |variable| {
-            try t.transVarDecl(scope, variable);
+            try t.transVarDecl(scope, variable, stmt);
             return ZigTag.declaration.init();
         },
         .switch_stmt => |switch_stmt| return t.transSwitch(scope, switch_stmt),
@@ -2607,6 +2637,8 @@ fn transPointerCastExpr(t: *Translator, scope: *Scope, expr: Node.Index) TransEr
 }
 
 fn transDeclRefExpr(t: *Translator, scope: *Scope, decl_ref: Node.DeclRef) TransError!ZigNode {
+    if (t.wip_var_inits.contains(decl_ref.decl)) return error.SelfReferential;
+
     const name = t.tree.tokSlice(decl_ref.name_tok);
     const maybe_alias = scope.getAlias(name);
     const mangled_name = maybe_alias orelse name;
